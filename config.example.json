@@ -1,0 +1,28 @@
+{
+  "nanoleaf": {
+    "host": "192.168.1.50",
+    "port": 16021,
+    "token": "",
+    "fps": 30
+  },
+  "audio": {
+    "source": "slimproto",
+    "server": "192.168.1.10",
+    "playerName": "Nanoleaf Feed",
+    "sampleRate": 44100,
+    "channels": 2,
+    "captureCommand": "ffmpeg",
+    "captureArgs": []
+  },
+  "roon": {
+    "enabled": true
+  },
+  "mapping": {
+    "attackMs": 5,
+    "releaseMs": 180,
+    "gain": 1.0,
+    "baseColor": [80, 0, 255],
+    "floor": 0.02,
+    "stereo": true
+  }
+}
