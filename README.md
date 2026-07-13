@@ -28,9 +28,11 @@ Roon Core ──PCM──▶ nanoleaf-roon-extension ──UDP frames──▶ N
   - `slimproto` — the extension registers itself with Roon as a Squeezebox player
     ("Nanoleaf Feed" zone) and receives raw PCM straight from the Core. No drivers, works on
     any OS, runs headless next to the Core.
-  - `capture` — captures a loopback/virtual audio device (e.g. VB-Audio Virtual Cable on
-    Windows) via `ffmpeg`. Group the virtual-cable zone with your speaker zone in Roon and both
-    receive sample-synced audio.
+  - `capture` — captures a loopback/virtual audio device via `ffmpeg` (ALSA `snd-aloop` +
+    Roon Bridge on Linux/Pi, VB-Audio Virtual Cable on Windows). The loopback is a RAAT zone,
+    so it **groups with RAAT endpoints** (Hegel, Linn, any Roon Ready streamer) and Roon keeps
+    it sample-synced with the speakers — use this when your listening zone is a network amp.
+    Recipe: [docs/DEPLOY-HEADLESS.md §5](docs/DEPLOY-HEADLESS.md#5-syncing-with-a-raat-zone-eg-a-hegel-or-other-network-amp).
 - **Nanoleaf pairing, SSDP discovery, layout-aware streaming** at a configurable frame rate
   (default 30 fps) via extControl v2 UDP.
 - **Deliberately thin mapping** — a peak/RMS envelope follower with attack/release smoothing.
