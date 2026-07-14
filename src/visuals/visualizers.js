@@ -30,18 +30,35 @@ function frame(layout, colorAt) {
   });
 }
 
+// Default floor coefficient: how brightly idle panels glow with the music. Every
+// engine lifts unlit panels to at least `f.energy * floorK` of the base hue, so all
+// panels stay in play instead of going black. Overridable per-run via visuals.floor.
+const DEFAULT_FLOOR = 0.2;
+
 class BaseEngine {
-  constructor(layout, palette, opts = {}, rng = Math.random) {
+  constructor(layout, palette, opts = {}, rng = Math.random, globals = {}) {
     this.layout = layout;
     this.palette = palette;
     this.opts = opts;
     this.rng = rng;
+    this.floorK = globals.floor ?? DEFAULT_FLOOR;
     this.flash = 0;
   }
   decayFlash(f, dtMs, ms = 180) {
     this.flash = Math.max(0, this.flash - dtMs / ms);
     if (f.onset) this.flash = 1;
     return this.flash;
+  }
+  /**
+   * The reactive floor every panel sits on: a dim base-hue wash whose brightness
+   * rides the music. Silent → ~black (the master silence gate handles true quiet),
+   * loud → a visible glow, so no panel is ever dead while something is playing.
+   */
+  floorLevel(f) {
+    return f.energy * this.floorK;
+  }
+  wash(f) {
+    return dim(hsv(this.palette.base, 1, 1), this.floorLevel(f));
   }
 }
 
@@ -63,7 +80,8 @@ class PulseEngine extends BaseEngine {
         const pos = n === 1 ? 0.5 : i / (n - 1);
         level = f.left * (1 - pos) + f.right * pos;
       }
-      if (level < 0.02 && flash === 0) return BLACK;
+      // Lift every panel to at least the reactive floor so no panel goes dark.
+      level = Math.max(level, this.floorLevel(f));
       return mix(dim(base, level), hit, flash * 0.7);
     });
   }
@@ -82,17 +100,18 @@ class BarsEngine extends BaseEngine {
     const hues = [this.palette.base, this.palette.accent, this.palette.hit];
     const along = this.opts.axis === 'y' ? 'ny' : 'nx';
     const fillAxis = this.opts.axis === 'y' ? 'nx' : 'ny';
+    const wash = this.wash(f);
     return frame(this.layout, (p) => {
       let coord = p[along];
       if (this.opts.mirror) coord = Math.abs(coord - 0.5) * 2; // bass at the center
       const band = Math.min(2, Math.floor(coord * 3));
       const level = bands[band];
       const peak = this.peaks[band];
-      if (level < 0.02 && peak < 0.02) return BLACK; // dark when this band is silent
+      if (level < 0.02 && peak < 0.02) return wash; // this band silent → just the floor
       const fill = p[fillAxis];
       if (fill <= level) return dim(hsv(hues[band], 1, 1), Math.max(level, 0.25));
-      if (fill <= peak) return dim(hsv(hues[band], 1, 1), 0.3); // peak-hold sparkle
-      return BLACK;
+      if (fill <= peak) return mix(wash, hsv(hues[band], 1, 1), 0.3); // peak-hold sparkle
+      return wash; // unfilled panels glow with the music instead of going black
     });
   }
 }
@@ -128,7 +147,7 @@ class RippleEngine extends BaseEngine {
     for (const rp of this.ripples) rp.radius += this.opts.implode ? -step : step;
     this.ripples = this.ripples.filter((rp) => rp.radius > -0.1 && rp.radius < 2.2);
 
-    const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.25);
+    const bg = this.wash(f);
     return frame(this.layout, (p) => {
       let c = bg;
       for (const rp of this.ripples) {
@@ -176,7 +195,7 @@ class StreaksEngine extends BaseEngine {
     this.streaks = this.streaks.filter((s) => s.pos > -0.3 && s.pos < 1.3);
 
     const rain = this.opts.mode === 'rain';
-    const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.2);
+    const bg = this.wash(f);
     return frame(this.layout, (p) => {
       let c = bg;
       for (const s of this.streaks) {
@@ -222,7 +241,7 @@ class WaveEngine extends BaseEngine {
     this.phase = (this.phase + ((0.25 + 0.9 * f.energy) * dtMs) / 1000) % 1;
     const width = 0.015 + 0.05 * f.bass;
     const axis = this.opts.axis === 'y' ? 'ny' : 'nx';
-    const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.2);
+    const bg = this.wash(f);
     return frame(this.layout, (p) => {
       let c = bg;
       const d1 = Math.min(Math.abs(p[axis] - this.phase), 1 - Math.abs(p[axis] - this.phase));
@@ -286,7 +305,7 @@ class ChaseEngine extends BaseEngine {
       this.pos = (this.pos + ((0.5 + 2.5 * f.energy) * n * dtMs) / 4000) % n;
     }
     const width = Math.max(1.2, n * 0.18);
-    const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.25);
+    const bg = this.wash(f);
     return frame(this.layout, (p, i) => {
       let d = Math.abs(i - this.pos);
       d = Math.min(d, n - d); // wrap around
@@ -299,9 +318,10 @@ class ChaseEngine extends BaseEngine {
 /** Classic VU meters: left/right channels fill from the edges (or bottom-up). */
 class VuEngine extends BaseEngine {
   render(f) {
+    const wash = this.wash(f);
     if (this.opts.vertical) {
       return frame(this.layout, (p) => {
-        if (f.rms < 0.02 || p.ny > f.rms) return BLACK;
+        if (f.rms < 0.02 || p.ny > f.rms) return wash; // silent or above the meter → floor
         const heat = p.ny / Math.max(f.rms, 0.01); // top of the bar runs hot
         return dim(hsv(heat > 0.75 ? this.palette.hit : this.palette.base, 1, 1), Math.max(f.rms, 0.3));
       });
@@ -310,7 +330,7 @@ class VuEngine extends BaseEngine {
       const leftSide = p.nx < 0.5;
       const level = leftSide ? f.left : f.right;
       const reach = leftSide ? (0.5 - p.nx) * 2 : (p.nx - 0.5) * 2; // 0 center → 1 edge
-      if (level < 0.02 || reach > level) return BLACK;
+      if (level < 0.02 || reach > level) return wash; // silent or beyond the meter → floor
       const heat = reach / Math.max(level, 0.01);
       return dim(hsv(heat > 0.75 ? this.palette.hit : this.palette.base, 1, 1), Math.max(level, 0.3));
     });
@@ -330,7 +350,7 @@ class BounceEngine extends BaseEngine {
     if (this.x < 0) { this.x = 0; this.v = 1; }
     const flash = this.decayFlash(f, dtMs);
     const size = 0.06 + 0.15 * f.bass;
-    const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.2);
+    const bg = this.wash(f);
     const positions = this.opts.duo ? [this.x, 1 - this.x] : [this.x];
     const hues = [this.palette.accent, this.palette.hit];
     return frame(this.layout, (p) => {
@@ -347,12 +367,13 @@ class BounceEngine extends BaseEngine {
 /** Flames: the bass drives the height, per-panel flicker keeps it alive. */
 class FireEngine extends BaseEngine {
   render(f) {
-    if (f.rms < 0.02 && f.bass < 0.02) return frame(this.layout, () => BLACK);
+    const wash = this.wash(f);
+    if (f.rms < 0.02 && f.bass < 0.02) return frame(this.layout, () => wash); // silent → floor
     const height = Math.min(1, 0.1 + f.bass * 1.1);
     return frame(this.layout, (p) => {
       const y = this.opts.inverted ? 1 - p.ny : p.ny;
       const flicker = 0.75 + this.rng() * 0.25;
-      if (y > height * flicker) return BLACK;
+      if (y > height * flicker) return wash; // above the flame: dim embers, not black
       const heat = 1 - y / Math.max(height, 0.01); // 1 at the root of the flame
       const hue = heat > 0.5 ? this.palette.hit : this.palette.accent;
       return dim(hsv(hue, 1, 1), (0.3 + 0.7 * heat) * Math.max(f.rms, 0.35) * flicker);
@@ -383,7 +404,7 @@ class SectionsEngine extends BaseEngine {
       });
       if (this.sections.length > 3) this.sections.shift();
     }
-    const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.2);
+    const bg = this.wash(f);
     return frame(this.layout, (p, i) => {
       let c = bg;
       for (const s of this.sections) {
@@ -457,10 +478,10 @@ function describeVisuals() {
   return [...REGISTRY.entries()].map(([name, v]) => ({ name, description: v.description }));
 }
 
-function createVisual(name, layout, palette, rng) {
+function createVisual(name, layout, palette, rng, globals = {}) {
   const entry = REGISTRY.get(name);
   if (!entry) throw new Error(`unknown visual "${name}" — available: ${visualNames().join(', ')}`);
-  return new entry.Engine(layout, palette, entry.opts, rng);
+  return new entry.Engine(layout, palette, entry.opts, rng, globals);
 }
 
 module.exports = { REGISTRY, visualNames, describeVisuals, createVisual };

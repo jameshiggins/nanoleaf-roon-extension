@@ -221,7 +221,9 @@ class VisualRenderer {
     this.currentName = this.visualBag.next();
     const paletteIndex = this.paletteBag.next();
     this.currentPalette = this.palettes[paletteIndex];
-    this.visual = createVisual(this.currentName, this.layout, this.currentPalette, this.rng);
+    this.visual = createVisual(this.currentName, this.layout, this.currentPalette, this.rng, {
+      floor: this.config.floor,
+    });
     this.lastRotateAt = this.now();
     const label = `${this.currentName} · ${this.currentPalette.name}`;
     log.info(`${initial ? 'starting with' : 'switching to'} ${label}`);

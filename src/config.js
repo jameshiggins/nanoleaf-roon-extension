@@ -35,6 +35,10 @@ const DEFAULTS = {
     attackMs: 5,         // envelope rise time constant
     releaseMs: 180,      // envelope fall time constant
     silenceFloor: 0.02,  // energy below this fades the panels to black
+    floor: 0.2,          // how brightly idle panels glow with the music (0 = classic
+                         // dark-floor look, higher = every panel stays lit). Coverage
+                         // vs. contrast dial; scales with the music, so silence is
+                         // still black via silenceFloor.
   },
 };
 
@@ -114,6 +118,7 @@ function validate(cfg, errors) {
   num(cfg.visuals.attackMs, 'visuals.attackMs', 0, 5000);
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);
   num(cfg.visuals.silenceFloor, 'visuals.silenceFloor', 0, 1);
+  num(cfg.visuals.floor, 'visuals.floor', 0, 1);
 }
 
 /**

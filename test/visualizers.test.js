@@ -105,3 +105,28 @@ test('single-panel layout is handled by every visualizer', () => {
     assert.equal(frame[0].id, 7);
   }
 });
+
+test('every visualizer lights all panels under a loud signal (floor coverage)', () => {
+  // The reactive floor must keep every panel in play while music is loud — no engine
+  // may leave a panel fully black. This is the regression the "only a couple panels
+  // lighting up" report exposed: meter-style engines used to return hard black.
+  for (const name of visualNames()) {
+    const viz = createVisual(name, LAYOUT, PALETTE, seqRng());
+    let frame;
+    for (let i = 0; i < 5; i++) frame = viz.render(LOUD, 33); // let motion/peaks settle
+    const dark = frame.filter((p) => Math.max(p.r, p.g, p.b) < 3);
+    assert.equal(dark.length, 0, `${name} left ${dark.length}/${frame.length} panels dark`);
+  }
+});
+
+test('visuals.floor 0 restores the classic dark floor (opt-out knob works)', () => {
+  // With the floor turned off, the meter engines go back to black outside their fill,
+  // proving the knob actually drives coverage rather than being cosmetic.
+  let anyDark = false;
+  for (const name of ['bars', 'vu', 'vu-tower', 'fire', 'pulse-blob']) {
+    const viz = createVisual(name, LAYOUT, PALETTE, seqRng(), { floor: 0 });
+    const frame = viz.render(LOUD, 33);
+    if (frame.some((p) => Math.max(p.r, p.g, p.b) < 3)) anyDark = true;
+  }
+  assert.ok(anyDark, 'floor 0 should leave some panels black on meter engines');
+});

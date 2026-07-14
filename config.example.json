@@ -27,6 +27,7 @@
     "gain": 1.0,
     "attackMs": 5,
     "releaseMs": 180,
-    "silenceFloor": 0.02
+    "silenceFloor": 0.02,
+    "floor": 0.2
   }
 }

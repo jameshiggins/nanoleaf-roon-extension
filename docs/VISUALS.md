@@ -68,7 +68,8 @@ hundreds). 30+ visualizers × 36 palettes ≈ **1,000+ distinct looks** in rotat
     "gain": 1.0,            // boost quiet sources so visuals reach full swing
     "attackMs": 5,          // envelope rise (snappier beats = lower)
     "releaseMs": 180,       // envelope fall (longer trails = higher)
-    "silenceFloor": 0.02    // energy below this fades panels to black
+    "silenceFloor": 0.02,   // energy below this fades panels to black
+    "floor": 0.2            // how brightly idle panels glow with the music
   }
 }
 ```
@@ -85,4 +86,9 @@ hundreds). 30+ visualizers × 36 palettes ≈ **1,000+ distinct looks** in rotat
 - Visuals too dim on quiet recordings → raise `visuals.gain` (e.g. `1.5`–`2.5`).
 - Beats feel mushy → lower `attackMs` and/or `releaseMs`.
 - Panels flicker to black between beats → raise `releaseMs`, or `silenceFloor` if it's noise.
+- **Only a few panels light up / looks sparse** → raise `visuals.floor` (e.g. `0.3`–`0.45`).
+  This is the coverage-vs-contrast dial: every panel glows at least `energy × floor` of the
+  base color, so the meter-style looks (`bars`, `vu`, `fire`, `pulse-blob`) keep the whole wall
+  alive instead of leaving unfilled panels dark. It rides the music, so silence is still black.
+  Set it to `0` for the classic high-contrast look where only the active panels light.
 - Want a specific vibe → `"include"` a subset (e.g. only `["wheel-rainbow","ripple-core","wave-cross"]`).
