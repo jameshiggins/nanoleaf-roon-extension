@@ -122,3 +122,64 @@ test('start wires the source and stop blacks out', () => {
 test('empty include/exclude intersection throws at construction', () => {
   assert.throws(() => make({ include: ['does-not-exist'] }).renderer, /no visualizers left/);
 });
+
+// --- control surface ---
+
+test('getState / getCatalogue expose current look and choices', () => {
+  const { renderer } = make({ include: ['wheel', 'ripple'] });
+  renderer.rotate(true);
+  const s = renderer.getState();
+  assert.ok(['wheel', 'ripple'].includes(s.visual));
+  assert.equal(typeof s.palette, 'string');
+  assert.equal(s.locked, false);
+  const cat = renderer.getCatalogue();
+  assert.deepEqual(cat.visuals.map((v) => v.name).sort(), ['ripple', 'wheel']);
+  assert.ok(cat.palettes.length >= 1);
+  assert.equal(cat.layout.length, 3);
+});
+
+test('selectVisual / selectPalette pin choices and reject unknowns', () => {
+  const { renderer } = make();
+  renderer.rotate(true);
+  assert.equal(renderer.selectVisual('WHEEL'), 'wheel');
+  assert.equal(renderer.currentName, 'wheel');
+  assert.equal(renderer.selectVisual('nope'), null);
+  const pal = renderer.currentPalette.name;
+  assert.equal(renderer.selectPalette(pal), pal);
+  assert.equal(renderer.selectPalette('no-such-palette'), null);
+  assert.equal(renderer.selectPalette(0), renderer.palettes[0].name);
+});
+
+test('setGain updates the feature extractor; setRotate toggles lock', () => {
+  const { renderer } = make();
+  renderer.rotate(true);
+  renderer.setGain(3);
+  assert.equal(renderer.config.gain, 3);
+  assert.equal(renderer.features.gain, 3);
+  renderer.setRotate('off');
+  assert.equal(renderer.getState().locked, true);
+  renderer.onTrackChange(); // ignored while off
+  const name = renderer.currentName;
+  renderer.next(); // manual advance still works
+  assert.ok(renderer.currentName); // may differ; just shouldn't throw
+});
+
+test('emits frame/rotate/state events for the control server', () => {
+  const { renderer } = make();
+  const events = { frame: 0, rotate: 0, state: 0 };
+  renderer.on('frame', () => events.frame++);
+  renderer.on('rotate', () => events.rotate++);
+  renderer.on('state', () => events.state++);
+  renderer.rotate(true);
+  assert.equal(events.rotate, 1);
+  assert.ok(events.state >= 1);
+  renderer.renderFrame();
+  assert.equal(events.frame, 1, 'frame emitted only when a listener is attached');
+});
+
+test('setNowPlaying flows into state', () => {
+  const { renderer } = make();
+  renderer.rotate(true);
+  renderer.setNowPlaying({ title: 'Song', artist: 'Band' });
+  assert.deepEqual(renderer.getState().nowPlaying, { title: 'Song', artist: 'Band' });
+});

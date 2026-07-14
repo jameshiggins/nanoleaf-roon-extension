@@ -36,6 +36,12 @@ const DEFAULTS = {
     releaseMs: 180,      // envelope fall time constant
     silenceFloor: 0.02,  // energy below this fades the panels to black
   },
+  control: {
+    enabled: true,       // companion-app HTTP/SSE server (open it on your Shield)
+    port: 8787,
+    host: '0.0.0.0',     // set to 127.0.0.1 to keep it off the LAN
+    frameHz: 20,         // telemetry frame rate pushed to the app
+  },
 };
 
 class ConfigError extends Error {}
@@ -114,6 +120,11 @@ function validate(cfg, errors) {
   num(cfg.visuals.attackMs, 'visuals.attackMs', 0, 5000);
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);
   num(cfg.visuals.silenceFloor, 'visuals.silenceFloor', 0, 1);
+
+  if (typeof cfg.control.enabled !== 'boolean') errors.push('control.enabled: expected true or false');
+  num(cfg.control.port, 'control.port', 1, 65535);
+  str(cfg.control.host, 'control.host');
+  num(cfg.control.frameHz, 'control.frameHz', 1, 60);
 }
 
 /**

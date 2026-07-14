@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Nanoleaf Roon Visualizer</title>
+<style>
+  :root { --bar-bg: rgba(12, 12, 16, 0.82); --focus: #7cf; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; -webkit-font-smoothing: antialiased; }
+  #stage { position: fixed; inset: 0; display: block; }
+  #np { position: fixed; left: 4vw; bottom: 4vh; max-width: 60vw; text-shadow: 0 2px 12px #000;
+    transition: opacity .5s; pointer-events: none; }
+  #np .title { font-size: 3.2vw; font-weight: 700; line-height: 1.1; }
+  #np .artist { font-size: 2vw; opacity: .85; margin-top: .4vh; }
+  #np .look { font-size: 1.4vw; opacity: .6; margin-top: 1.2vh; letter-spacing: .04em; text-transform: uppercase; }
+  #np.hidden { opacity: 0; }
+  #conn { position: fixed; top: 3vh; right: 3vw; font-size: 1.2vw; opacity: .0; transition: opacity .3s;
+    background: rgba(200,40,40,.85); padding: .5vh 1.4vw; border-radius: 999px; }
+  #conn.show { opacity: 1; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 1vw; justify-content: center;
+    padding: 2.4vh 2vw; background: linear-gradient(to top, var(--bar-bg), transparent);
+    transform: translateY(120%); transition: transform .35s ease; }
+  #bar.show { transform: translateY(0); }
+  .btn { display: flex; flex-direction: column; align-items: center; gap: .6vh; min-width: 12vw;
+    padding: 1.6vh 1vw; border-radius: 1.4vh; background: rgba(255,255,255,.08);
+    border: 3px solid transparent; font-size: 1.5vw; }
+  .btn .ico { font-size: 3vw; line-height: 1; }
+  .btn.focus { border-color: var(--focus); background: rgba(124,204,255,.16); box-shadow: 0 0 3vh rgba(124,204,255,.35); }
+  #hint { position: fixed; top: 3vh; left: 50%; transform: translateX(-50%); font-size: 1.2vw;
+    opacity: .0; transition: opacity .4s; background: rgba(0,0,0,.5); padding: .6vh 1.6vw; border-radius: 999px; }
+  #hint.show { opacity: .8; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="np" class="hidden"><div class="title"></div><div class="artist"></div><div class="look"></div></div>
+<div id="conn">reconnecting…</div>
+<div id="hint">press ▲ for controls</div>
+<div id="bar">
+  <div class="btn" data-cmd="prev"><span class="ico">⏮</span><span>Prev look</span></div>
+  <div class="btn" data-cmd="next"><span class="ico">⏭</span><span>Next look</span></div>
+  <div class="btn" data-cmd="lock"><span class="ico">🔀</span><span>Auto</span></div>
+  <div class="btn" data-cmd="palette"><span class="ico">🎨</span><span>Palette</span></div>
+  <div class="btn" data-cmd="gain-"><span class="ico">🔉</span><span>Gain −</span></div>
+  <div class="btn" data-cmd="gain+"><span class="ico">🔊</span><span>Gain +</span></div>
+</div>
+
+<script>
+"use strict";
+(function () {
+  var canvas = document.getElementById("stage");
+  var ctx = canvas.getContext("2d");
+  var npEl = document.getElementById("np");
+  var connEl = document.getElementById("conn");
+  var barEl = document.getElementById("bar");
+  var hintEl = document.getElementById("hint");
+  var buttons = Array.prototype.slice.call(barEl.querySelectorAll(".btn"));
+
+  var state = { visual: null, palette: null, gain: 1, rotate: "track", locked: false, nowPlaying: null };
+  var catalogue = { layout: [], visuals: [], palettes: [] };
+  var colors = [];      // latest per-panel [r,g,b]
+  var features = { energy: 0, bass: 0, onset: false };
+  var beat = 0;         // decaying beat pulse for bloom
+  var dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+  // ---- rendering ----
+  function resize() {
+    canvas.width = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function draw() {
+    var W = canvas.width, H = canvas.height;
+    beat *= 0.9;
+    // background wash from the average panel color
+    var ar = 0, ag = 0, ab = 0, n = colors.length || 1;
+    for (var i = 0; i < colors.length; i++) { ar += colors[i][0]; ag += colors[i][1]; ab += colors[i][2]; }
+    ar /= n; ag /= n; ab /= n;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgb(0,0,0)";
+    ctx.fillRect(0, 0, W, H);
+    var wash = 0.10 + 0.10 * features.energy;
+    ctx.fillStyle = "rgba(" + (ar|0) + "," + (ag|0) + "," + (ab|0) + "," + wash + ")";
+    ctx.fillRect(0, 0, W, H);
+
+    // panels as additive glowing blobs at their layout positions
+    ctx.globalCompositeOperation = "lighter";
+    var layout = catalogue.layout;
+    var pad = 0.12;
+    var radius = (Math.min(W, H) * (0.16 + 0.06 * beat)) / Math.max(1, Math.sqrt(layout.length) * 0.9);
+    for (var k = 0; k < layout.length; k++) {
+      var c = colors[k]; if (!c) continue;
+      var x = (pad + (1 - 2 * pad) * layout[k].nx) * W;
+      var y = (pad + (1 - 2 * pad) * (1 - layout[k].ny)) * H; // flip: layout ny 0 = bottom
+      var mx = Math.max(c[0], c[1], c[2]);
+      if (mx < 3) continue;
+      var g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      var a = Math.min(1, mx / 255 + 0.15);
+      g.addColorStop(0, "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")");
+      g.addColorStop(0.5, "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a * 0.35) + ")");
+      g.addColorStop(1, "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, radius, 0, 6.2832); ctx.fill();
+    }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  // ---- now-playing / status overlay ----
+  function renderState() {
+    var np = state.nowPlaying;
+    var t = np && (np.title || "");
+    npEl.querySelector(".title").textContent = t || "";
+    npEl.querySelector(".artist").textContent = np ? (np.artist || "") : "";
+    var look = (state.visual || "") + (state.palette ? "  ·  " + state.palette : "") + (state.locked ? "  ·  locked" : "");
+    npEl.querySelector(".look").textContent = look;
+    npEl.classList.toggle("hidden", !t && !state.visual);
+    var lockBtn = barEl.querySelector('[data-cmd="lock"]');
+    lockBtn.querySelector("span:last-child").textContent = state.locked ? "Auto: off" : "Auto: on";
+  }
+
+  // ---- SSE telemetry ----
+  var es;
+  function connect() {
+    es = new EventSource("/events");
+    es.addEventListener("hello", function (e) {
+      var d = JSON.parse(e.data); catalogue = d.catalogue; state = d.state; renderState();
+      connEl.classList.remove("show");
+    });
+    es.addEventListener("frame", function (e) {
+      var d = JSON.parse(e.data); colors = d.c; features = d.f || features;
+      if (features.onset) beat = 1;
+    });
+    es.addEventListener("state", function (e) { state = JSON.parse(e.data); renderState(); });
+    es.onopen = function () { connEl.classList.remove("show"); };
+    es.onerror = function () { connEl.classList.add("show"); }; // EventSource auto-reconnects
+  }
+  connect();
+
+  // ---- controls (D-pad friendly) ----
+  var focusIdx = 0, barTimer = null;
+  function showBar() {
+    barEl.classList.add("show"); hintEl.classList.remove("show"); setFocus(focusIdx);
+    clearTimeout(barTimer); barTimer = setTimeout(hideBar, 6000);
+  }
+  function hideBar() { barEl.classList.remove("show"); buttons.forEach(function (b) { b.classList.remove("focus"); }); }
+  function setFocus(i) {
+    focusIdx = (i + buttons.length) % buttons.length;
+    buttons.forEach(function (b, j) { b.classList.toggle("focus", j === focusIdx); });
+  }
+  function post(cmd, value) {
+    fetch("/api/command", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: cmd, value: value }),
+    }).catch(function () {});
+  }
+  var paletteIdx = 0;
+  function activate(cmd) {
+    if (cmd === "prev" || cmd === "next") post("next");            // both advance the shuffle
+    else if (cmd === "lock") post(state.locked ? "unlock" : "lock");
+    else if (cmd === "palette") { paletteIdx = (paletteIdx + 1) % (catalogue.palettes.length || 1);
+      post("palette", catalogue.palettes[paletteIdx]); }
+    else if (cmd === "gain+") post("gain", Math.min(8, (state.gain || 1) + 0.25));
+    else if (cmd === "gain-") post("gain", Math.max(0.25, (state.gain || 1) - 0.25));
+  }
+
+  buttons.forEach(function (b, i) {
+    b.addEventListener("click", function () { setFocus(i); activate(b.dataset.cmd); });
+  });
+
+  // Semantic key handling, shared by browser keydown and the native TV wrapper
+  // (the Android WebView calls window.__tvKey because Chromium ignores synthetic keyCodes).
+  function handleKey(name) {
+    var barOpen = barEl.classList.contains("show");
+    switch (name) {
+      case "up": showBar(); break;
+      case "down": if (barOpen) hideBar(); break;
+      case "left": if (barOpen) { setFocus(focusIdx - 1); resetTimer(); } break;
+      case "right": if (barOpen) { setFocus(focusIdx + 1); resetTimer(); } break;
+      case "ok": if (barOpen) { activate(buttons[focusIdx].dataset.cmd); resetTimer(); } else showBar(); break;
+      case "back": if (barOpen) hideBar(); break;
+      case "next": activate("next"); break;
+    }
+  }
+  window.__tvKey = handleKey; // called by the Android TV wrapper
+
+  var KEYS = { 38: "up", 40: "down", 37: "left", 39: "right", 13: "ok", 32: "ok", 78: "next", 8: "back", 27: "back" };
+  document.addEventListener("keydown", function (e) {
+    var name = KEYS[e.keyCode];
+    if (!name) return;
+    if (!(name === "back" && !barEl.classList.contains("show"))) e.preventDefault();
+    handleKey(name);
+  });
+  function resetTimer() { clearTimeout(barTimer); barTimer = setTimeout(hideBar, 6000); }
+
+  // show the hint briefly on load, and open controls on a tap/click anywhere
+  hintEl.classList.add("show"); setTimeout(function () { hintEl.classList.remove("show"); }, 4000);
+  document.addEventListener("click", function (e) { if (!barEl.contains(e.target)) showBar(); });
+})();
+</script>
+</body>
+</html>

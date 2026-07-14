@@ -21,6 +21,9 @@ Roon Core ──PCM──▶ nanoleaf-roon-extension ──UDP frames──▶ N
   raise `visuals.palettes` for more. Together that's **1,000+ distinct looks** in rotation.
 - **A shuffle-bag rotation** on every Roon track change: every combo appears before any repeats,
   never the same one twice in a row.
+- **A companion app for Android TV / NVIDIA Shield** — the same visualization mirrored full-screen
+  on your TV, with D-pad controls (next look, lock, palette, gain). Runs as a web app the Shield
+  opens directly, or as a native APK. See [docs/COMPANION-APP.md](docs/COMPANION-APP.md).
 
 ## Works great with a networked amp (Hegel, etc.)
 
@@ -79,6 +82,7 @@ Then in Roon, **Settings → Extensions** → enable *Nanoleaf Roon Extension*, 
 | Doc | Contents |
 | --- | --- |
 | [docs/VISUALS.md](docs/VISUALS.md) | The visualizers, palettes, features they react to, and how to tune them |
+| [docs/COMPANION-APP.md](docs/COMPANION-APP.md) | Android TV / Shield app + the control/telemetry API it runs on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component and data-flow reference for the code in `src/` |
 | [docs/NANOLEAF-PROTOCOL.md](docs/NANOLEAF-PROTOCOL.md) | Pairing, REST endpoints and the extControl v2 UDP wire format |
 | [docs/PLAN.md](docs/PLAN.md) | Project plan: goals, architecture, latency, milestones, risks |

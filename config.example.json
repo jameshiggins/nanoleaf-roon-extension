@@ -28,5 +28,11 @@
     "attackMs": 5,
     "releaseMs": 180,
     "silenceFloor": 0.02
+  },
+  "control": {
+    "enabled": true,
+    "port": 8787,
+    "host": "0.0.0.0",
+    "frameHz": 20
   }
 }

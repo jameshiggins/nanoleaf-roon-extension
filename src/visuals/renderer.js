@@ -11,15 +11,22 @@
  *
  * A master silence gate fades everything to black when the feed goes quiet, so
  * pauses and gaps between tracks look intentional rather than frozen.
+ *
+ * It is an EventEmitter so a control surface (the companion app's API) can
+ * observe it and drive it live:
+ *   'frame'  (frame[], features, gate)  — every rendered frame
+ *   'rotate' ({visual, palette})        — the look changed
+ *   'state'  (getState())               — any state change worth pushing
  */
 
+const { EventEmitter } = require('node:events');
 const { FeatureExtractor } = require('../dsp/features');
 const { generatePalettes } = require('./palettes');
-const { visualNames, createVisual } = require('./visualizers');
+const { visualNames, describeVisuals, createVisual } = require('./visualizers');
 const { ShuffleBag, filterNames } = require('./shuffle');
 const log = require('../log')('visuals');
 
-class VisualRenderer {
+class VisualRenderer extends EventEmitter {
   /**
    * @param {{ source: import('node:events').EventEmitter,
    *           streamer: { sendFrame(panels): void, blackout(ids): void },
@@ -31,6 +38,7 @@ class VisualRenderer {
    *           rng?: () => number }} opts
    */
   constructor(opts) {
+    super();
     this.source = opts.source;
     this.streamer = opts.streamer;
     this.layout = opts.layout;
@@ -45,22 +53,25 @@ class VisualRenderer {
       now: this.now,
     });
 
-    const names = filterNames(visualNames(), { include: this.config.include, exclude: this.config.exclude });
-    if (names.length === 0) throw new Error('no visualizers left after include/exclude filtering');
+    this.poolNames = filterNames(visualNames(), { include: this.config.include, exclude: this.config.exclude });
+    if (this.poolNames.length === 0) throw new Error('no visualizers left after include/exclude filtering');
     const missing = (this.config.include || []).filter(
       (n) => !visualNames().some((v) => v.toLowerCase() === n.toLowerCase())
     );
     if (missing.length) log.warn(`visuals.include entries unknown: ${missing.join(', ')}`);
 
-    this.visualBag = new ShuffleBag(names, { rng: this.rng });
+    this.visualBag = new ShuffleBag(this.poolNames, { rng: this.rng });
     this.palettes = generatePalettes(this.config.palettes);
     this.paletteBag = new ShuffleBag(this.palettes.map((_, i) => i), { rng: this.rng });
 
     this.visual = null;
     this.currentName = null;
     this.currentPalette = null;
+    this.nowPlaying = null;    // { title, artist, album, zoneName } | null
     this.gate = 0;             // master silence gate [0,1]
+    this.lastFeatures = this.features.snapshot();
     this.lastRotateAt = 0;
+    this.started = false;
     this.renderTimer = null;
     this.rotateTimer = null;
 
@@ -69,21 +80,29 @@ class VisualRenderer {
   }
 
   start() {
+    this.started = true;
     this.rotate(true); // pick the first combo
     this.source.on('format', this._onFormat);
     this.source.on('pcm', this._onPcm);
     this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
-    if (typeof this.config.rotate === 'number' && this.config.rotate > 0) {
-      this.rotateTimer = setInterval(() => this.rotate(false), this.config.rotate * 1000);
-    }
+    this._armRotateTimer();
   }
 
   stop() {
+    this.started = false;
     clearInterval(this.renderTimer);
     clearInterval(this.rotateTimer);
     this.source.off('format', this._onFormat);
     this.source.off('pcm', this._onPcm);
     this.streamer.blackout(this.layout.map((p) => p.id));
+  }
+
+  _armRotateTimer() {
+    clearInterval(this.rotateTimer);
+    this.rotateTimer = null;
+    if (this.started && typeof this.config.rotate === 'number' && this.config.rotate > 0) {
+      this.rotateTimer = setInterval(() => this.rotate(false), this.config.rotate * 1000);
+    }
   }
 
   /** Called by the track watcher (or the rotate timer) to switch the look. */
@@ -97,20 +116,28 @@ class VisualRenderer {
     this.rotate(false);
   }
 
-  /** Swap in a new visualizer + palette. */
+  /** Swap in a new visualizer + palette from the shuffle bags. */
   rotate(initial) {
-    this.currentName = this.visualBag.next();
-    const paletteIndex = this.paletteBag.next();
-    this.currentPalette = this.palettes[paletteIndex];
-    this.visual = createVisual(this.currentName, this.layout, this.currentPalette, this.rng);
+    const name = this.visualBag.next();
+    const palette = this.palettes[this.paletteBag.next()];
+    this._apply(name, palette, initial ? 'starting with' : 'switching to');
+  }
+
+  _apply(name, palette, verb) {
+    this.currentName = name;
+    this.currentPalette = palette;
+    this.visual = createVisual(name, this.layout, palette, this.rng);
     this.lastRotateAt = this.now();
-    const label = `${this.currentName} · ${this.currentPalette.name}`;
-    log.info(`${initial ? 'starting with' : 'switching to'} ${label}`);
+    const label = `${name} · ${palette.name}`;
+    log.info(`${verb} ${label}`);
     this.onStatus(`▶ ${label}`);
+    this.emit('rotate', { visual: name, palette: palette.name });
+    this.emit('state', this.getState());
   }
 
   renderFrame() {
     const f = this.features.snapshot();
+    this.lastFeatures = f;
     // Silence gate: rise quickly when sound returns, fall gently on quiet.
     const target = f.energy > this.config.silenceFloor ? 1 : 0;
     const rate = target > this.gate ? 0.5 : 0.06; // per frame
@@ -126,7 +153,83 @@ class VisualRenderer {
       }
     }
     this.streamer.sendFrame(frame);
+    if (this.listenerCount('frame') > 0) this.emit('frame', frame, f, this.gate);
     return frame;
+  }
+
+  // ---- control surface (used by the companion-app API) ----
+
+  /** @returns {{visual, palette, paletteCount, gain, rotate, minSeconds, locked, nowPlaying, panels}} */
+  getState() {
+    return {
+      visual: this.currentName,
+      palette: this.currentPalette ? this.currentPalette.name : null,
+      paletteCount: this.palettes.length,
+      gain: this.config.gain,
+      rotate: this.config.rotate,
+      minSeconds: this.config.minSeconds,
+      locked: this.config.rotate === 'off',
+      nowPlaying: this.nowPlaying,
+      panels: this.layout.length,
+    };
+  }
+
+  /** The full catalogue the app offers as choices. */
+  getCatalogue() {
+    return {
+      visuals: describeVisuals().filter((v) => this.poolNames.includes(v.name)),
+      palettes: this.palettes.map((p) => p.name),
+      layout: this.layout.map((p) => ({ id: p.id, nx: p.nx, ny: p.ny })),
+    };
+  }
+
+  setNowPlaying(track) {
+    this.nowPlaying = track;
+    this.emit('state', this.getState());
+  }
+
+  /** Rotate immediately (manual "next"), independent of the rotate mode. */
+  next() {
+    this.rotate(false);
+  }
+
+  /** Pin a specific visualizer by name (case-insensitive). Returns the resolved name or null. */
+  selectVisual(name) {
+    const resolved = visualNames().find((v) => v.toLowerCase() === String(name).toLowerCase());
+    if (!resolved) return null;
+    this._apply(resolved, this.currentPalette || this.palettes[0], 'selecting');
+    return resolved;
+  }
+
+  /** Pin a palette by name or index. Returns the resolved palette name or null. */
+  selectPalette(nameOrIndex) {
+    let palette = null;
+    if (typeof nameOrIndex === 'number') {
+      palette = this.palettes[nameOrIndex] || null;
+    } else {
+      palette = this.palettes.find((p) => p.name.toLowerCase() === String(nameOrIndex).toLowerCase()) || null;
+    }
+    if (!palette) return null;
+    this._apply(this.currentName || this.visualBag.next(), palette, 'recoloring');
+    return palette.name;
+  }
+
+  setGain(gain) {
+    const g = Math.max(0, Math.min(100, Number(gain)));
+    if (!Number.isFinite(g)) return this.config.gain;
+    this.config.gain = g;
+    this.features.gain = g;
+    this.emit('state', this.getState());
+    return g;
+  }
+
+  /** @param {'track'|'off'|number} mode */
+  setRotate(mode) {
+    if (mode !== 'track' && mode !== 'off' && !(typeof mode === 'number' && mode > 0)) return this.config.rotate;
+    this.config.rotate = mode;
+    this._armRotateTimer();
+    this.emit('state', this.getState());
+    return mode;
   }
 }
 

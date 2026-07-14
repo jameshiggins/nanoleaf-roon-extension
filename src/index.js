@@ -96,7 +96,12 @@ async function runService(configFile) {
     const { RoonExtension } = require('./roon/extension');
     const { TrackWatcher } = require('./roon/trackwatcher');
     const watcher = new TrackWatcher({ zone: cfg.roon.zone });
-    watcher.on('track', () => renderer && renderer.onTrackChange());
+    watcher.on('track', (track) => {
+      if (!renderer) return;
+      renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
+      renderer.onTrackChange();
+    });
+    watcher.on('idle', () => renderer && renderer.setNowPlaying(null));
     watcher.on('zones', ({ matched, all }) => {
       if (cfg.roon.zone && matched.length === 0) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
@@ -144,9 +149,29 @@ async function runService(configFile) {
   renderer.start();
   source.start();
 
+  // Companion-app control + telemetry server (open it on your Shield).
+  let control = null;
+  if (cfg.control.enabled) {
+    const { ControlServer } = require('./control/server');
+    control = new ControlServer({
+      renderer,
+      port: cfg.control.port,
+      host: cfg.control.host,
+      frameHz: cfg.control.frameHz,
+    });
+    try {
+      const port = await control.start();
+      setStatus(`Companion app at http://<this-host>:${port}`);
+    } catch (err) {
+      log.warn(`companion app server failed to start: ${err.message}`);
+      control = null;
+    }
+  }
+
   const shutdown = () => {
     log.info('shutting down');
     source.stop();
+    if (control) control.stop();
     renderer.stop(); // sends the blackout frame
     setTimeout(() => {
       streamer.close();

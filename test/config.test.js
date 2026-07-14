@@ -103,3 +103,14 @@ test('fromObject: legacy scenes/mode keys are now rejected', () => {
   assert.throws(() => config.fromObject({ mode: 'scenes' }), /mode: unknown setting/);
   assert.throws(() => config.fromObject({ scenes: {} }), /scenes: unknown setting/);
 });
+
+test('fromObject: control block defaults and validation', () => {
+  assert.equal(config.fromObject({}).control.port, 8787);
+  assert.equal(config.fromObject({}).control.enabled, true);
+  assert.throws(() => config.fromObject({ control: { port: 0 } }), /control\.port/);
+  assert.throws(() => config.fromObject({ control: { frameHz: 999 } }), /control\.frameHz/);
+  assert.throws(() => config.fromObject({ control: { enabled: 'yes' } }), /control\.enabled/);
+  const cfg = config.fromObject({ control: { host: '127.0.0.1', frameHz: 30 } });
+  assert.equal(cfg.control.host, '127.0.0.1');
+  assert.equal(cfg.control.frameHz, 30);
+});

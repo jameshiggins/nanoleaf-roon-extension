@@ -42,6 +42,9 @@ audio path**: visuals keep rendering from the stream even if Roon drops — only
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |
 | `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle`/`zones` (no Roon dependency) | — |
+| `src/control/server.js` | Companion-app HTTP + SSE server: serves the web app, `GET /api/state`, `/api/catalogue`, `POST /api/command`, live `GET /events`; `applyCommand` pure command applier | http (built-in) |
+| `src/control/webapp/index.html` | Self-contained TV web app: canvas panel-mirror, now-playing, D-pad controls over the API | — |
+| `android/` | Android TV WebView wrapper (Java + Gradle) that loads the web app; ships as source (no SDK here to build) | Android SDK |
 
 ## Design rules
 
