@@ -88,8 +88,8 @@ async function runService(configFile) {
     process.exit(EXIT_CONFIG);
   }
 
-  // Roon: status line + track-change rotation. The audio path works without it,
-  // so a Roon outage never darkens the panels — rotation just pauses.
+  // Roon: status line + track-change rotation + panel ownership. Playback takes the
+  // panels; going idle hands them back to whatever effect they were showing before.
   let roon = null;
   let renderer = null;
   if (cfg.roon.enabled) {
@@ -97,6 +97,8 @@ async function runService(configFile) {
     const { TrackWatcher } = require('./roon/trackwatcher');
     const watcher = new TrackWatcher({ zone: cfg.roon.zone });
     watcher.on('track', () => renderer && renderer.onTrackChange());
+    watcher.on('playing', () => renderer && renderer.acquire().catch((err) => log.error(err.message)));
+    watcher.on('idle', () => renderer && renderer.release());
     watcher.on('zones', ({ matched, all }) => {
       if (cfg.roon.zone && matched.length === 0) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
@@ -110,13 +112,13 @@ async function runService(configFile) {
     if (roon) roon.setStatus(msg, isErr);
   };
 
-  // Nanoleaf: validate token, fetch layout, power on, enter streaming mode.
+  // Nanoleaf: validate the token and fetch the layout. We deliberately do NOT power on
+  // or enter extControl here — the renderer takes the panels when Roon starts playing
+  // and gives them back when it stops.
   const client = new NanoleafClient(cfg.nanoleaf);
   let layout;
   try {
     layout = await client.getLayout();
-    await client.setPower(true);
-    await client.enableExtControl();
   } catch (err) {
     if (err instanceof NanoleafHttpError && err.status === 401) {
       console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
@@ -125,13 +127,14 @@ async function runService(configFile) {
     throw err; // transient (controller offline) → exit 1, service manager retries
   }
   const panels = prepareLayout(layout.positionData);
-  log.info(`nanoleaf ready: ${panels.length} panels, streaming at ${cfg.nanoleaf.fps} fps`);
+  log.info(`nanoleaf ready: ${panels.length} panels, ${cfg.nanoleaf.fps} fps when playing`);
 
   const streamer = new Streamer({ host: cfg.nanoleaf.host, fps: cfg.nanoleaf.fps });
   const source = createSource(cfg.audio);
   renderer = new VisualRenderer({
     source,
     streamer,
+    client,
     layout: panels,
     config: cfg.visuals,
     fps: cfg.nanoleaf.fps,
@@ -144,10 +147,25 @@ async function runService(configFile) {
   renderer.start();
   source.start();
 
-  const shutdown = () => {
+  // Without Roon there is no play/idle signal, so hold the panels for the whole run.
+  if (!cfg.roon.enabled) {
+    log.info('roon disabled — acquiring panels for the lifetime of the process');
+    await renderer.acquire();
+  }
+
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info('shutting down');
     source.stop();
-    renderer.stop(); // sends the blackout frame
+    // Hand the panels back before exiting, rather than leaving them stuck in extControl.
+    try {
+      await renderer.releaseNow();
+    } catch (err) {
+      log.error(`shutdown: ${err.message}`);
+    }
+    renderer.stop();
     setTimeout(() => {
       streamer.close();
       process.exit(0);

@@ -37,7 +37,7 @@ audio path**: visuals keep rendering from the stream even if Roon drops — only
 | `src/visuals/visualizers.js` | 12 parametric engines × variant grid → 30+ named visualizers; `createVisual`, `describeVisuals` | palettes |
 | `src/visuals/layout.js` | `prepareLayout()`: panel positions → normalized nx/ny, left→right, drop pseudo-panel | — |
 | `src/visuals/shuffle.js` | `ShuffleBag` (no-repeat rotation) + `filterNames` (include/exclude) | — |
-| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer | features, visualizers, palettes, shuffle |
+| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer; panel ownership (acquire on play, debounced release + restore on idle) | features, visualizers, palettes, shuffle |
 | `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `setPower`, `identify` | http |
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |

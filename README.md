@@ -67,6 +67,20 @@ Then in Roon, **Settings → Extensions** → enable *Nanoleaf Roon Extension*, 
 5. **Rotate** — Roon track changes (via the transport API) trigger a switch to a new
    visualizer + palette.
 
+### Panel ownership: it borrows the panels, it doesn't keep them
+
+The extension only holds the panels while Roon is actually playing.
+
+- **On play** it *acquires* them: saves whichever effect was selected and whether the panels
+  were on, powers them on, enters extControl, and starts streaming.
+- **On idle** (Roon paused/stopped) it *releases* them after a 5-second debounce — restoring the
+  saved effect and, if the panels were off before, switching them back off. Resuming inside the
+  debounce window cancels the pending release, so track gaps and quick pauses don't flap.
+- **While released** it streams nothing at all, so the Nanoleaf app, a schedule, or whatever else
+  had the panels keeps them. Stopping the service also hands them back.
+
+The upshot: when the music stops, the panels go back to exactly what they were doing before.
+
 ## Running it permanently
 
 - **Headless / next to the Core** — [docs/DEPLOY-HEADLESS.md](docs/DEPLOY-HEADLESS.md)
