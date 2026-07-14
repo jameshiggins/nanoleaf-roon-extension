@@ -94,8 +94,8 @@ able to open a TCP connection *back* to the SlimProto player. Bridged networking
 
 ## 4. Raspberry Pi notes
 
-- Any Pi (Zero 2 W upward) is ample: the pipeline is an envelope follower and a UDP socket;
-  CPU load is a few percent.
+- Any Pi (Zero 2 W upward) is ample: the analysis (one-pole band filters, no FFT) and the
+  visualizers are cheap; CPU load is a few percent.
 - Use a wired connection if possible — the UDP frame stream is small (~6 KB/s at 30 fps for
   24 panels) but Wi-Fi latency spikes are visible as stutter.
 

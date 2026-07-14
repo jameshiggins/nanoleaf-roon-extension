@@ -2,54 +2,52 @@
 
 ## 1. Goal
 
-Improve Nanoleaf music responsiveness by feeding it Roon's audio directly instead of relying on
-microphone-based detection.
+Produce good **music visualizations on Nanoleaf panels, driven by Roon's audio stream** — not by
+a microphone. There is one behavior: analyze the stream, render a visualization from it, stream
+it to the panels, and rotate the look on every track change. The intended target is a networked
+amp (e.g. a Hegel) via a sample-synced loopback zone.
 
 **In scope**
 
-- A Roon extension (Node.js, `node-roon-api`) that pairs with the Core and reports status.
-- Capturing raw PCM from Roon's output path.
-- Pushing the signal to Nanoleaf via its external control API (streaming/UDP).
-- Deployable as a Windows service **or** as a headless "root" extension running next to the
-  Roon Core (systemd/Docker).
+- A Roon extension (Node.js, `node-roon-api`) that pairs with the Core, reports status, and
+  provides track-change events for rotation.
+- Capturing raw PCM from Roon's output path (SlimProto player or ffmpeg loopback capture).
+- On-extension audio analysis: level/stereo envelopes, bass/mid/treble bands, beat detection.
+- A library of visualizers (30+) and procedurally generated palettes (36+), rotated per track.
+- Streaming the result to Nanoleaf via its external control (extControl v2 UDP) API.
+- Deployable as a Windows service **or** headless next to the Core (systemd/Docker).
 - Documentation and automated tests.
 
-**Out of scope (by requirement)**
+**Out of scope**
 
-- Custom frequency analysis (FFT band splitting, beat detection, spectrum effects).
-- Playback state syncing (play/pause/seek-driven scenes). *Scope change (v0.2): per-track
-  scene rotation was added by request — the extension now watches Roon track changes to pick a
-  different installed Nanoleaf music scene per track (see SCENES.md). Seek/pause-driven
-  effects remain out of scope.*
+- Playback state syncing beyond track-change rotation (no seek/pause-driven scene scripting).
 - Volume-based effects (mapping zone volume to brightness).
 
+> **Scope evolution.** v0.1 deliberately avoided frequency analysis and shipped a loudness-only
+> envelope; a v0.2 experiment rotated the device's own mic-driven Rhythm scenes. Both are
+> **removed**. Per the project owner's direction — "it should be good audio visuals based on the
+> stream" — the extension now does its own analysis (bands + onsets) and renders the visuals
+> itself. The mic is never used.
+
 <a name="feasibility"></a>
-## 2. Feasibility analysis — the one constraint that shapes everything
+## 2. The constraint that shapes everything
 
-The original idea was: *push PCM samples to Nanoleaf and let Nanoleaf do the audio analysis on
-its side.* That exact shape is **not possible with Nanoleaf's public API**:
+Nanoleaf's public API **cannot ingest audio over the network.** extControl (v1/v2) is a UDP
+protocol whose payload is *per-panel RGBW color frames* (see
+[NANOLEAF-PROTOCOL.md](NANOLEAF-PROTOCOL.md)); there is no endpoint that accepts PCM, and the
+on-device Rhythm engine reads only the built-in microphone or the Light Panels Rhythm module's
+3.5 mm aux jack.
 
-1. **The external control API does not carry audio.** extControl (v1/v2) is a UDP protocol whose
-   payload is *per-panel RGBW color frames* (see
-   [NANOLEAF-PROTOCOL.md](NANOLEAF-PROTOCOL.md)). There is no documented network endpoint on any
-   Nanoleaf device that accepts PCM, and the on-device "Sound Scene"/Rhythm analysis engine only
-   reads from the built-in microphone or the Rhythm module's 3.5 mm aux input.
-2. **The only true audio input is analog.** The Rhythm module (Light Panels / Canvas) has an aux
-   jack. Feeding it means physical audio, not a network API.
+Since the panels can't analyze our audio and the mic is exactly what we're trying to avoid, the
+**analysis and the visualization both happen in the extension**, and we send finished color
+frames. This is what makes the visuals fully ours to design — bands, beats, motion, palettes —
+rather than being limited to what the device's mic engine produces. It works on every
+extControl-capable device (Shapes, Elements, Lines, Canvas, gen-2 Light Panels) with no extra
+hardware.
 
-That leaves two viable architectures, both of which still achieve the actual goal (music
-response driven by the real signal, ahead of room acoustics):
-
-| Option | How | Analysis lives | Pros | Cons |
-| --- | --- | --- | --- | --- |
-| **A. Frame streaming** *(this repo)* | Tap PCM from Roon → minimal loudness envelope → extControl v2 UDP frames | Extension (envelope only, deliberately thin) | Pure software, works on all Nanoleaf gen-2+ devices, latency fully under our control | Analysis is on our side; kept to a non-frequency envelope to honor the scope |
-| **B. Aux-in hardware feed** | Add a cheap USB DAC as a Roon zone, cable its line-out to the Rhythm module's aux jack, group that zone with the speakers | Nanoleaf (its native Rhythm engine) | Zero custom analysis — exactly the original intent | Requires Rhythm module hardware + a dedicated DAC; Roon zone-grouping sync applies |
-
-**Decision: implement Option A, document Option B.** Option A needs no extra hardware and works
-on Shapes/Elements/Lines which have no aux input. The envelope mapping is intentionally minimal
-and isolated in one module (`src/pipeline.js`) so it stays within the "no custom frequency
-analysis" boundary and so Option B users can still use the rest of the stack (Roon pairing,
-capture, deployment tooling).
+The audio the analysis sees is the real stream, tapped from Roon (§3). For a networked amp like
+a Hegel, a loopback capture zone grouped with the amp keeps the analysis sample-synced with what
+you hear — see [DEPLOY-HEADLESS.md §5](DEPLOY-HEADLESS.md#5-syncing-with-a-raat-zone-eg-a-hegel-or-other-network-amp).
 
 ## 3. How we get PCM out of Roon
 
@@ -108,7 +106,7 @@ Target: light output at or before acoustic output.
 | Stage | slimproto | capture (grouped zone) |
 | --- | --- | --- |
 | Roon → extension | negative (Core pre-buffers to players; we read ahead of the playback clock) | ~0 (sample-synced with speaker zone) + device buffer 10–50 ms |
-| Envelope + frame encode | < 1 ms | < 1 ms |
+| Analyze + render + encode | ~1 ms | ~1 ms |
 | UDP → panel render | 10–20 ms (LAN + controller) | 10–20 ms |
 | **Net vs. speakers** | **light leads** (tunable by how much buffer we hold back) | **≈ simultaneous** (typically within one frame) |
 
@@ -137,33 +135,37 @@ Two first-class deployment targets, one codebase:
 - Nanoleaf REST client against an in-process mock HTTP server (pairing, layout, extControl
   enable, error paths).
 - UDP streamer against a local datagram socket (frame pacing, payload correctness).
-- PCM utilities (chunking, peak/RMS, envelope attack/release math) with synthetic signals.
-- Config loading/validation, SSDP response parsing.
+- DSP: band split (bass/mid/treble separation on synthetic tones), onset detection,
+  feature extractor; envelope/peak/RMS math with synthetic signals.
+- Visualizers: every one renders valid, finite, per-panel frames across a simulated song, is
+  dark in silence, and reacts to beats; palettes generate the requested count, all distinct.
+- Renderer: rotation (shuffle-bag, rate limit), silence gate, source wiring, blackout on stop.
+- TrackWatcher zone-event logic; config loading/validation; SSDP response parsing.
 
 **Integration (manual, live hardware — tracked per milestone):**
 
 - SlimProto against a real Roon Core: registration, zone appears, PCM flows, survives
   Core restart and network drop (reconnect with backoff).
-- extControl v2 against real panels (Shapes + Canvas): pairing flow, sustained 30 fps, frame
-  latency eyeball test against a click track.
+- Roon transport: track-change events fire once per track and rotate the look.
+- extControl v2 against real panels (Shapes + Canvas): pairing flow, sustained 30 fps, visual
+  responsiveness against real music.
 - Windows service lifecycle: install, reboot, crash-recovery, log rotation.
 
-**Non-goals in tests:** audio *quality* (we only measure levels), Roon API mocking beyond
-pairing (the Roon connection is optional at runtime — the audio path works without it).
+**Non-goals in tests:** subjective visual *quality* (validated by eye on hardware), Roon API
+mocking beyond pairing (the audio path works without a Roon connection).
 
 <a name="milestones"></a>
 ## 8. Milestones
 
 | # | Deliverable | Status |
 | --- | --- | --- |
-| M0 | Repo, plan, docs, CI skeleton | ✅ this commit |
-| M1 | Nanoleaf client + streamer + discovery, unit-tested | ✅ this commit |
-| M2 | PCM pipeline + envelope mapping, unit-tested; `stdin` source end-to-end against real panels | ✅ code, ⬜ live-panel pass |
+| M0 | Repo, plan, docs, CI skeleton | ✅ |
+| M1 | Nanoleaf client + streamer + discovery, unit-tested | ✅ |
+| M2 | DSP (bands + onsets) + visualizer library (30+) + palette generator (36+) + renderer, unit-tested; end-to-end against a mock controller | ✅ code, ⬜ live-panel pass |
 | M3 | SlimProto source: codecs unit-tested; live pass against Roon Core (register, stream, reconnect) | ✅ code, ⬜ live-Core pass |
-| M4 | Roon extension pairing + status reporting in Roon UI | ✅ code, ⬜ live pass |
+| M4 | Roon extension pairing + status + track-change rotation | ✅ code, ⬜ live pass |
 | M5 | `capture` source + Windows service guide validated on a Windows box | ✅ code/docs, ⬜ validation |
-| M6 | Headless deployment (systemd/Docker) validated; v0.2 tag | ⬜ |
-| M7 | Option B write-up validated with Rhythm hardware (community help wanted) | ⬜ |
+| M6 | Headless deployment (systemd/Docker) + Hegel/RAAT loopback validated; v0.2 tag | ⬜ |
 
 ## 9. Risks & mitigations
 
@@ -173,7 +175,8 @@ pairing (the Roon connection is optional at runtime — the audio path works wit
 | SlimProto subtleties (Roon's dialect vs. LMS) | M3 slips | Codec layer unit-tested against the documented LMS wire format; live pass is an explicit milestone gate |
 | Panel firmware throttles UDP frame rate | choppy visuals | fps configurable; drop-frame pacing in streamer (send newest, never queue) |
 | Nanoleaf auth token invalidated (factory reset) | stream stops | Clear re-pair flow (`npm run pair`); streamer surfaces HTTP 401 distinctly |
-| Envelope-only mapping feels too basic | user disappointment | Documented scope decision; mapping isolated behind one function so it can be swapped without touching transport code; Option B path for native Rhythm analysis |
+| A visualizer looks bad on real panels | poor experience | 30+ to rotate through; `include`/`exclude` to curate; each is an isolated pure renderer, easy to tune or drop |
+| Mic-quiet source or quiet mastering | dim visuals | `gain` config; silence gate keeps gaps clean; band boosts tuned so full-scale music reaches full swing |
 | Windows loopback drivers vary | support burden | Standardize docs on VB-Audio Virtual Cable; `stdin` source as escape hatch |
 
 ## 10. Repository conventions

@@ -1,7 +1,7 @@
 {
   "name": "nanoleaf-roon-extension",
-  "version": "0.1.0",
-  "description": "Roon extension that feeds Roon's audio signal to Nanoleaf panels over the external control (streaming UDP) API, ahead of speaker playback.",
+  "version": "0.2.0",
+  "description": "Roon extension that turns Roon's audio stream into music-reactive Nanoleaf visualizations, streamed panel-by-panel over the external control (UDP) API and rotated on every track change.",
   "license": "MIT",
   "author": "James Higgins",
   "type": "commonjs",
@@ -16,6 +16,7 @@
     "start": "node src/index.js",
     "pair": "node src/index.js --pair",
     "discover": "node src/index.js --discover",
+    "visuals": "node src/index.js --list-visuals",
     "test": "node --test"
   },
   "dependencies": {

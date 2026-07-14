@@ -11,7 +11,8 @@ test('fromObject: empty object yields validated defaults', () => {
   const cfg = config.fromObject({});
   assert.equal(cfg.nanoleaf.port, 16021);
   assert.equal(cfg.audio.source, 'slimproto');
-  assert.equal(cfg.mapping.releaseMs, 180);
+  assert.equal(cfg.visuals.rotate, 'track');
+  assert.equal(cfg.visuals.releaseMs, 180);
 });
 
 test('fromObject: deep merge preserves untouched defaults', () => {
@@ -29,13 +30,13 @@ test('fromObject: collects every error at once', () => {
     config.fromObject({
       nanoleaf: { fps: 999 },
       audio: { source: 'telepathy' },
-      mapping: { baseColor: [999] },
+      visuals: { palettes: 0 },
     });
     assert.fail('should have thrown');
   } catch (err) {
     assert.match(err.message, /nanoleaf\.fps/);
     assert.match(err.message, /audio\.source/);
-    assert.match(err.message, /mapping\.baseColor/);
+    assert.match(err.message, /visuals\.palettes/);
   }
 });
 
@@ -71,21 +72,34 @@ test('load: invalid JSON reports the file path', () => {
   }
 });
 
-test('fromObject: scenes mode requires roon enabled', () => {
+test('fromObject: rotate "track" requires roon enabled', () => {
   assert.throws(
-    () => config.fromObject({ mode: 'scenes', roon: { enabled: false } }),
-    /scenes.*requires roon\.enabled/
+    () => config.fromObject({ roon: { enabled: false } }),
+    /rotate "track" requires roon\.enabled/
   );
-  const ok = config.fromObject({ mode: 'scenes' });
-  assert.equal(ok.mode, 'scenes');
+  // with a non-track rotate, roon can be off
+  const ok = config.fromObject({ roon: { enabled: false }, visuals: { rotate: 'off' } });
+  assert.equal(ok.visuals.rotate, 'off');
 });
 
-test('fromObject: mode and scenes settings are validated', () => {
-  assert.throws(() => config.fromObject({ mode: 'disco' }), /mode: expected stream\|scenes/);
-  assert.throws(() => config.fromObject({ scenes: { include: 'Ripple' } }), /scenes\.include/);
-  assert.throws(() => config.fromObject({ scenes: { minSeconds: -1 } }), /scenes\.minSeconds/);
-  const cfg = config.fromObject({ mode: 'scenes', scenes: { exclude: ['Fireworks'], onStop: 'off' } });
-  assert.deepEqual(cfg.scenes.exclude, ['Fireworks']);
-  assert.equal(cfg.scenes.onStop, 'off');
-  assert.equal(cfg.scenes.musicOnly, true);
+test('fromObject: visuals.rotate accepts track|off|seconds', () => {
+  assert.equal(config.fromObject({ visuals: { rotate: 'off' } }).visuals.rotate, 'off');
+  assert.equal(config.fromObject({ visuals: { rotate: 120 } }).visuals.rotate, 120);
+  assert.throws(() => config.fromObject({ visuals: { rotate: 'disco' } }), /visuals\.rotate/);
+  assert.throws(() => config.fromObject({ visuals: { rotate: -5 } }), /visuals\.rotate/);
+  assert.throws(() => config.fromObject({ visuals: { rotate: 0 } }), /visuals\.rotate/);
+});
+
+test('fromObject: visuals settings are validated', () => {
+  assert.throws(() => config.fromObject({ visuals: { include: 'ripple' } }), /visuals\.include/);
+  assert.throws(() => config.fromObject({ visuals: { palettes: 9999 } }), /visuals\.palettes/);
+  assert.throws(() => config.fromObject({ visuals: { silenceFloor: 2 } }), /visuals\.silenceFloor/);
+  const cfg = config.fromObject({ visuals: { include: ['ripple', 'wheel'], gain: 2 } });
+  assert.deepEqual(cfg.visuals.include, ['ripple', 'wheel']);
+  assert.equal(cfg.visuals.gain, 2);
+});
+
+test('fromObject: legacy scenes/mode keys are now rejected', () => {
+  assert.throws(() => config.fromObject({ mode: 'scenes' }), /mode: unknown setting/);
+  assert.throws(() => config.fromObject({ scenes: {} }), /scenes: unknown setting/);
 });

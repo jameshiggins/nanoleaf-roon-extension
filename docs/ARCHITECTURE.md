@@ -3,23 +3,23 @@
 ## Data flow
 
 ```
-                 ┌────────────────────────────── nanoleaf-roon-extension ─────────────────────────────┐
-                 │                                                                                     │
- Roon Core ──────┤ AudioSource            PCM (s16le)      Pipeline               frames    Streamer   │
-   │             │ ┌──────────────────┐   chunks   ┌──────────────────────┐   ┌─────────────────────┐ │      UDP 60222
-   ├─ slimproto ─┼▶│ SlimprotoSource  │──────────▶│ envelope follower     │──▶│ extControl v2       │─┼────▶ Nanoleaf
-   ├─ loopback ──┼▶│ CaptureSource    │           │ (peak/RMS, attack/    │   │ frame encoder +     │ │      controller
-   │  (ffmpeg)   │ │ StdinSource      │           │ release) → per-panel  │   │ paced UDP sender    │ │
-   │             │ └──────────────────┘           │ RGBW via layout       │   └─────────────────────┘ │
-   │             │                                └──────────────────────┘              ▲             │
-   │             │                                                                      │ layout,     │
-   └─ extension ─┼──▶ RoonExtension (pairing, status display)      NanoleafClient ──────┘ token,      │
-      API        │                                                 (REST :16021)          extControl  │
-                 └─────────────────────────────────────────────────────────────────────────────────────┘
+              ┌───────────────────────────── nanoleaf-roon-extension ──────────────────────────────┐
+              │                                                                                      │
+ Roon Core ───┤ AudioSource        PCM     FeatureExtractor      VisualRenderer          Streamer    │
+   │          │ ┌──────────────┐  chunks  ┌────────────────┐   ┌──────────────────┐  ┌─────────────┐ │   UDP 60222
+   ├ slimproto┼▶│ SlimprotoSrc │───────▶│ bands / onset /  │─▶│ visualizer.render │─▶│ extControl  │─┼─▶ Nanoleaf
+   ├ capture ─┼▶│ CaptureSource│        │ level features   │   │ (30+) × palette   │  │ v2 encoder  │ │   controller
+   │ (ffmpeg) │ │ StdinSource  │        └────────────────┘   │ + silence gate    │  │ + UDP pacer │ │
+   │          │ └──────────────┘                             └──────────────────┘  └─────────────┘ │
+   │          │                                                        ▲                            │
+   ├ transport┼──▶ TrackWatcher ── 'track' ──▶ rotate visualizer+palette                            │
+   └ extension┼──▶ RoonExtension (pairing, status)   NanoleafClient ──┘ layout, token, extControl   │
+      API      │                                     (REST :16021)                                   │
+              └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The Roon extension connection (pairing + status in the Roon UI) is **optional at runtime**: the
-audio path works without it, so a Roon API outage never darkens the panels.
+The Roon extension connection (pairing + status + track-change rotation) is **optional to the
+audio path**: visuals keep rendering from the stream even if Roon drops — only rotation pauses.
 
 ## Modules
 
@@ -32,28 +32,30 @@ audio path works without it, so a Roon API outage never darkens the panels.
 | `src/audio/sources.js` | `AudioSource` factory: `slimproto` \| `capture` \| `stdin`; all emit `pcm` (Buffer, s16le), `start`, `stop`, `error` | slimproto.js |
 | `src/audio/slimproto.js` | Minimal Squeezebox/SlimProto client: codecs (`encodeHelo`, `encodeStat`, `parseServerFrames`, `parseStrm`) + `SlimprotoClient` (register, fetch HTTP audio stream, heartbeats, reconnect) | net |
 | `src/audio/pcm.js` | Pure PCM math: interleaved s16le → peak/RMS, `EnvelopeFollower` (one-pole attack/release) | — |
-| `src/pipeline.js` | Glue: PCM chunks → envelope → `mapEnvelopeToFrame()` → streamer at fixed fps. The **only** place audio becomes light | pcm.js |
-| `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `identify` | http |
+| `src/dsp/features.js` | `FeatureExtractor`: PCM → bass/mid/treble bands (one-pole split, no FFT), level/stereo envelopes, `OnsetDetector` (bass-flux beat flag) | pcm.js |
+| `src/visuals/palettes.js` | `hsv`/`mix`/`dim` helpers + `generatePalettes()` (golden-angle hues × harmony schemes) | — |
+| `src/visuals/visualizers.js` | 12 parametric engines × variant grid → 30+ named visualizers; `createVisual`, `describeVisuals` | palettes |
+| `src/visuals/layout.js` | `prepareLayout()`: panel positions → normalized nx/ny, left→right, drop pseudo-panel | — |
+| `src/visuals/shuffle.js` | `ShuffleBag` (no-repeat rotation) + `filterNames` (include/exclude) | — |
+| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer | features, visualizers, palettes, shuffle |
+| `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `setPower`, `identify` | http |
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |
-| `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle` (no Roon dependency) | — |
-| `src/scenes/picker.js` | Shuffle-bag scene rotation + include/exclude filtering; pure | — |
-| `src/scenes/rotator.js` | scenes mode glue: track events → power/select on the controller, 404 re-discovery, onStop policy | picker, client |
+| `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle`/`zones` (no Roon dependency) | — |
 
 ## Design rules
 
 1. **Wire formats are pure functions.** Every encode/parse is a standalone function over
    Buffers with unit tests pinned to byte layouts. Sockets are thin shells around them.
-2. **One mapping choke point.** `mapEnvelopeToFrame(panels, envelope, opts)` is the entire
-   audio→light policy. Swapping the aesthetic (or, later, plugging in something smarter) touches
-   nothing else. It is time-domain only — no FFT, per the project scope.
+2. **Visualizers are pure, swappable renderers.** Each takes `(layout, palette, opts, rng)` and
+   maps a feature snapshot to panel colors — no I/O, no state beyond its own animation. The
+   registry is generated (engines × variants), so adding a look is one small class or opts row.
 3. **Sources are interchangeable.** Everything downstream sees `pcm` events of interleaved
-   s16le at a declared sample rate/channel count. Adding a source (e.g. a future RAAT tap)
-   means implementing one EventEmitter.
-4. **Fail toward darkness, recover loudly.** On stream loss the streamer sends one black frame
-   and stops; sources reconnect with capped exponential backoff; the Roon status line reflects
-   the current state.
-5. **Newest frame wins.** The streamer never queues: if encode outpaces the fps budget, stale
+   s16le at a declared sample rate/channel count. Adding a source means implementing one EventEmitter.
+4. **Fail toward darkness, recover loudly.** The silence gate fades to black when the feed goes
+   quiet; on stream loss the streamer sends one black frame; sources reconnect with capped
+   backoff; the Roon status line reflects the current visualizer/palette and any errors.
+5. **Newest frame wins.** The streamer never queues: if rendering outpaces the fps budget, stale
    frames are dropped. Latency is the product's point; a backlog is worse than a skip.
 
 ## Error handling & lifecycle

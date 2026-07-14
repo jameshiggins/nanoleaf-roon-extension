@@ -1,5 +1,4 @@
 {
-  "mode": "stream",
   "nanoleaf": {
     "host": "192.168.1.50",
     "port": 16021,
@@ -7,31 +6,27 @@
     "fps": 30
   },
   "audio": {
-    "source": "slimproto",
+    "source": "capture",
+    "captureArgs": ["-f", "alsa", "-i", "hw:Loopback,1,0"],
+    "sampleRate": 48000,
+    "channels": 2,
     "server": "192.168.1.10",
     "playerName": "Nanoleaf Feed",
-    "sampleRate": 44100,
-    "channels": 2,
-    "captureCommand": "ffmpeg",
-    "captureArgs": []
+    "captureCommand": "ffmpeg"
   },
   "roon": {
     "enabled": true,
     "zone": ""
   },
-  "scenes": {
+  "visuals": {
     "include": [],
     "exclude": [],
-    "musicOnly": true,
-    "onStop": "keep",
-    "minSeconds": 8
-  },
-  "mapping": {
+    "palettes": 36,
+    "rotate": "track",
+    "minSeconds": 8,
+    "gain": 1.0,
     "attackMs": 5,
     "releaseMs": 180,
-    "gain": 1.0,
-    "baseColor": [80, 0, 255],
-    "floor": 0.02,
-    "stereo": true
+    "silenceFloor": 0.02
   }
 }

@@ -77,8 +77,8 @@ Notes learned the hard way (encoded in the streamer):
 
 - **Keepalive:** if no datagram arrives for ~10 s the controller drops out of extControl mode.
   The streamer re-sends the last frame at 1 Hz during silence.
-- **Rate:** 30 fps is safe on Canvas/Shapes; 60 fps generally works but gains little for an
-  envelope effect. Configurable via `nanoleaf.fps`.
+- **Rate:** 30 fps is safe on Canvas/Shapes and smooth for the visualizers; 60 fps generally
+  works but the controller/LAN is usually the limit before it helps. Configurable via `nanoleaf.fps`.
 - **Panels not in the frame keep their last color** — always address every panel.
 - v1 (`extControlVersion` omitted, 1-byte panel IDs) is required only by original Aurora
   firmware < 3.1; not supported here.
