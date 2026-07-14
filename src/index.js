@@ -16,7 +16,7 @@ function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--pair' || a === '--discover' || a === '--help') args[a.slice(2)] = true;
+    if (a === '--pair' || a === '--discover' || a === '--help' || a === '--list-scenes') args[a.slice(2)] = true;
     else if (a === '--host' || a === '--config') args[a.slice(2)] = argv[++i];
     else args._.push(a);
   }
@@ -61,6 +61,21 @@ async function runPair(args, configFile) {
   }
 }
 
+async function listScenes(configFile) {
+  const cfg = config.load(configFile);
+  const client = new NanoleafClient(cfg.nanoleaf);
+  const effects = await client.getAllEffects();
+  const { isMusicEffect } = require('./nanoleaf/client');
+  if (!effects.length) {
+    console.log('No effects installed on the controller.');
+    return;
+  }
+  console.log('Installed effects (♪ = music-reactive, used by scenes mode):\n');
+  for (const e of effects.sort((a, b) => a.animName.localeCompare(b.animName))) {
+    console.log(`  ${isMusicEffect(e) ? '♪' : ' '} ${e.animName}`);
+  }
+}
+
 async function runService(configFile) {
   let cfg;
   try {
@@ -73,7 +88,55 @@ async function runService(configFile) {
     console.error('nanoleaf.host / nanoleaf.token missing — run `npm run discover` then `npm run pair -- --host <ip>`.');
     process.exit(EXIT_CONFIG);
   }
+  return cfg.mode === 'scenes' ? runScenesMode(cfg) : runStreamMode(cfg);
+}
 
+/**
+ * scenes mode: rotate installed Nanoleaf music scenes on every Roon track change.
+ * The device's own Rhythm engine (its microphone / aux input) does the visualization.
+ */
+async function runScenesMode(cfg) {
+  const { TrackWatcher } = require('./roon/trackwatcher');
+  const { SceneRotator } = require('./scenes/rotator');
+  const { RoonExtension } = require('./roon/extension');
+
+  const client = new NanoleafClient(cfg.nanoleaf);
+  const watcher = new TrackWatcher({ zone: cfg.roon.zone });
+
+  const roon = new RoonExtension({ onZoneEvent: (response, msg) => watcher.handleEvent(response, msg) });
+  const setStatus = (msg, isErr) => {
+    log.info(`status: ${msg}`);
+    roon.setStatus(msg, isErr);
+  };
+
+  const rotator = new SceneRotator({ client, watcher, config: cfg.scenes, onStatus: setStatus });
+  try {
+    await rotator.start(); // validates token + discovers scenes before touching Roon
+  } catch (err) {
+    if (err instanceof NanoleafHttpError && err.status === 401) {
+      console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
+      process.exit(EXIT_REPAIR_NEEDED);
+    }
+    console.error(err.message);
+    process.exit(EXIT_CONFIG);
+  }
+
+  roon.start();
+  const zoneDesc = cfg.roon.zone ? `zone "${cfg.roon.zone}"` : 'any playing zone';
+  setStatus(`Scene rotation armed — watching ${zoneDesc}`);
+  log.info('waiting for track changes; scenes switch as tracks change');
+
+  const shutdown = () => {
+    log.info('shutting down');
+    rotator.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+/** stream mode: drive panels directly from Roon's audio signal over extControl UDP. */
+async function runStreamMode(cfg) {
   // Roon extension presence (optional at runtime)
   let roon = null;
   if (cfg.roon.enabled) {
@@ -135,11 +198,12 @@ async function runService(configFile) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log('Usage: nanoleaf-roon [--config <file>] [--discover] [--pair --host <ip>]');
+    console.log('Usage: nanoleaf-roon [--config <file>] [--discover] [--pair --host <ip>] [--list-scenes]');
     return;
   }
   if (args.discover) return runDiscover();
   if (args.pair) return runPair(args, args.config);
+  if (args['list-scenes']) return listScenes(args.config);
   return runService(args.config);
 }
 

@@ -107,3 +107,85 @@ test('401 propagates status for the re-pair flow', async () => {
     server.close();
   }
 });
+
+test('getEffectsList: bare JSON array of names', async () => {
+  const { server, requests, port } = await mockDevice((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(['Sound Bar', 'Ripple']));
+  });
+  try {
+    const client = new NanoleafClient({ host: '127.0.0.1', port, token: 't' });
+    assert.deepEqual(await client.getEffectsList(), ['Sound Bar', 'Ripple']);
+    assert.equal(requests[0].url, '/api/v1/t/effects/effectsList');
+  } finally {
+    server.close();
+  }
+});
+
+test('getSelectedEffect: bare JSON string (incl. pseudo-names)', async () => {
+  const { server, port } = await mockDevice((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify('*ExtControl*'));
+  });
+  try {
+    const client = new NanoleafClient({ host: '127.0.0.1', port, token: 't' });
+    assert.equal(await client.getSelectedEffect(), '*ExtControl*');
+  } finally {
+    server.close();
+  }
+});
+
+test('getAllEffects: sends requestAll, unwraps animations', async () => {
+  const animations = [
+    { animName: 'Sound Bar', animType: 'plugin', pluginType: 'rhythm' },
+    { animName: 'Snowfall', animType: 'plugin', pluginType: 'color' },
+  ];
+  const { server, requests, port } = await mockDevice((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ animations }));
+  });
+  try {
+    const client = new NanoleafClient({ host: '127.0.0.1', port, token: 't' });
+    assert.deepEqual(await client.getAllEffects(), animations);
+    assert.deepEqual(requests[0].body, { write: { command: 'requestAll' } });
+  } finally {
+    server.close();
+  }
+});
+
+test('selectEffect: PUT select body; 404 surfaces for unknown names', async () => {
+  const { server, requests, port } = await mockDevice((req, res, body) => {
+    res.writeHead(body && body.select === 'Ripple' ? 204 : 404);
+    res.end();
+  });
+  try {
+    const client = new NanoleafClient({ host: '127.0.0.1', port, token: 't' });
+    await client.selectEffect('Ripple');
+    assert.deepEqual(requests[0], { method: 'PUT', url: '/api/v1/t/effects', body: { select: 'Ripple' } });
+    await assert.rejects(() => client.selectEffect('Gone'), (err) => err.status === 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('setPower: PUT state on/off body', async () => {
+  const { server, requests, port } = await mockDevice((req, res) => {
+    res.writeHead(204);
+    res.end();
+  });
+  try {
+    const client = new NanoleafClient({ host: '127.0.0.1', port, token: 't' });
+    await client.setPower(false);
+    assert.deepEqual(requests[0], { method: 'PUT', url: '/api/v1/t/state', body: { on: { value: false } } });
+  } finally {
+    server.close();
+  }
+});
+
+test('isMusicEffect: rhythm via pluginType or legacy animType', () => {
+  const { isMusicEffect } = require('../src/nanoleaf/client');
+  assert.equal(isMusicEffect({ animType: 'plugin', pluginType: 'rhythm' }), true);
+  assert.equal(isMusicEffect({ animType: 'rhythm' }), true);
+  assert.equal(isMusicEffect({ animType: 'plugin', pluginType: 'color' }), false);
+  assert.equal(isMusicEffect({ animType: 'static' }), false);
+});

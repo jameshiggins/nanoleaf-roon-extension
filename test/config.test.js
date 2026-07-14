@@ -70,3 +70,22 @@ test('load: invalid JSON reports the file path', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('fromObject: scenes mode requires roon enabled', () => {
+  assert.throws(
+    () => config.fromObject({ mode: 'scenes', roon: { enabled: false } }),
+    /scenes.*requires roon\.enabled/
+  );
+  const ok = config.fromObject({ mode: 'scenes' });
+  assert.equal(ok.mode, 'scenes');
+});
+
+test('fromObject: mode and scenes settings are validated', () => {
+  assert.throws(() => config.fromObject({ mode: 'disco' }), /mode: expected stream\|scenes/);
+  assert.throws(() => config.fromObject({ scenes: { include: 'Ripple' } }), /scenes\.include/);
+  assert.throws(() => config.fromObject({ scenes: { minSeconds: -1 } }), /scenes\.minSeconds/);
+  const cfg = config.fromObject({ mode: 'scenes', scenes: { exclude: ['Fireworks'], onStop: 'off' } });
+  assert.deepEqual(cfg.scenes.exclude, ['Fireworks']);
+  assert.equal(cfg.scenes.onStop, 'off');
+  assert.equal(cfg.scenes.musicOnly, true);
+});

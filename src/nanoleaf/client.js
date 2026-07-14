@@ -89,12 +89,56 @@ class NanoleafClient {
     return this._request('PUT', this._authed('/identify'));
   }
 
-  /** Put the controller into extControl v2 streaming mode (UDP 60222). */
+  /**
+   * Put the controller into extControl v2 streaming mode (UDP 60222).
+   * Note: selecting any effect afterwards silently kills the UDP session —
+   * this handshake must be re-sent before streaming again.
+   */
   async enableExtControl() {
     return this._request('PUT', this._authed('/effects'), {
       write: { command: 'display', animType: 'extControl', extControlVersion: 'v2' },
     });
   }
+
+  /** @returns {Promise<string[]>} names of all effects installed on the controller */
+  async getEffectsList() {
+    return this._request('GET', this._authed('/effects/effectsList'));
+  }
+
+  /**
+   * Currently active effect name. Pseudo-names like "*ExtControl*" / "*Solid*"
+   * mean no named effect is active (and are not selectable).
+   */
+  async getSelectedEffect() {
+    return this._request('GET', this._authed('/effects/select'));
+  }
+
+  /**
+   * Full metadata for every installed effect. Music-reactive effects have
+   * pluginType "rhythm" (modern) or animType "rhythm" (legacy).
+   * @returns {Promise<Array<{animName: string, animType: string, pluginType?: string}>>}
+   */
+  async getAllEffects() {
+    const res = await this._request('PUT', this._authed('/effects'), {
+      write: { command: 'requestAll' },
+    });
+    return (res && res.animations) || [];
+  }
+
+  /** Activate an installed effect by exact (case-sensitive) name. 404 → unknown name. */
+  async selectEffect(name) {
+    return this._request('PUT', this._authed('/effects'), { select: name });
+  }
+
+  /** Turn the panels on or off. */
+  async setPower(on) {
+    return this._request('PUT', this._authed('/state'), { on: { value: !!on } });
+  }
 }
 
-module.exports = { NanoleafClient, NanoleafHttpError };
+/** True if this effect reacts to audio (device mic / Rhythm module). */
+function isMusicEffect(effect) {
+  return effect.animType === 'rhythm' || effect.pluginType === 'rhythm';
+}
+
+module.exports = { NanoleafClient, NanoleafHttpError, isMusicEffect };

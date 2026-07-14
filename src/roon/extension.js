@@ -33,17 +33,26 @@ function saveState(state) {
 }
 
 class RoonExtension {
-  constructor() {
+  /**
+   * @param {{ onZoneEvent?: (response: string, msg: object|undefined) => void }} [opts]
+   *   onZoneEvent: raw subscribe_zones callback (e.g. TrackWatcher#handleEvent).
+   *   Providing it makes RoonApiTransport a required service and (re)subscribes
+   *   on every pairing — core_paired delivers a fresh Core after each reconnect,
+   *   so the subscription must be renewed there.
+   */
+  constructor(opts = {}) {
+    this.onZoneEvent = opts.onZoneEvent ?? null;
     this.roon = null;
     this.status = null;
     this.core = null;
   }
 
   start() {
-    let RoonApi, RoonApiStatus;
+    let RoonApi, RoonApiStatus, RoonApiTransport;
     try {
       RoonApi = require('node-roon-api');
       RoonApiStatus = require('node-roon-api-status');
+      if (this.onZoneEvent) RoonApiTransport = require('node-roon-api-transport');
     } catch (err) {
       throw new Error(
         'node-roon-api is not installed — run `npm install`, or set roon.enabled=false ' +
@@ -63,6 +72,15 @@ class RoonExtension {
       core_paired: (core) => {
         this.core = core;
         log.info(`paired with Roon Core "${core.display_name}" (${core.display_version})`);
+        if (this.onZoneEvent) {
+          core.services.RoonApiTransport.subscribe_zones((response, msg) => {
+            try {
+              this.onZoneEvent(response, msg);
+            } catch (err) {
+              log.error('zone event handler failed:', err);
+            }
+          });
+        }
       },
       core_unpaired: () => {
         this.core = null;
@@ -71,7 +89,10 @@ class RoonExtension {
     });
 
     this.status = new RoonApiStatus(this.roon);
-    this.roon.init_services({ provided_services: [this.status] });
+    this.roon.init_services({
+      provided_services: [this.status],
+      ...(this.onZoneEvent ? { required_services: [RoonApiTransport] } : {}),
+    });
     this.setStatus('Starting…');
     this.roon.start_discovery();
     log.info('Roon discovery started — enable the extension in Roon Settings → Extensions');

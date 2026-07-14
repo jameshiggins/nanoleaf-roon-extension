@@ -24,7 +24,13 @@ Roon Core ──PCM──▶ nanoleaf-roon-extension ──UDP frames──▶ N
 ## Features
 
 - **Roon extension pairing** — shows up in Roon Settings → Extensions, reports live status.
-- **Two audio taps**
+- **Two modes**
+  - `stream` (default) — drives panels from Roon's audio signal via extControl UDP (below).
+  - `scenes` — rotates the Nanoleaf **community/native music scenes** already installed on the
+    controller, picking a different one on every Roon track change (shuffle-bag, no immediate
+    repeats). The device's own Rhythm engine does the visualization. See
+    [docs/SCENES.md](docs/SCENES.md), including the microphone trade-off.
+- **Two audio taps** (stream mode)
   - `slimproto` — the extension registers itself with Roon as a Squeezebox player
     ("Nanoleaf Feed" zone) and receives raw PCM straight from the Core. No drivers, works on
     any OS, runs headless next to the Core.
@@ -35,8 +41,9 @@ Roon Core ──PCM──▶ nanoleaf-roon-extension ──UDP frames──▶ N
     Recipe: [docs/DEPLOY-HEADLESS.md §5](docs/DEPLOY-HEADLESS.md#5-syncing-with-a-raat-zone-eg-a-hegel-or-other-network-amp).
 - **Nanoleaf pairing, SSDP discovery, layout-aware streaming** at a configurable frame rate
   (default 30 fps) via extControl v2 UDP.
-- **Deliberately thin mapping** — a peak/RMS envelope follower with attack/release smoothing.
-  Frequency analysis, playback-state syncing and volume-based effects are out of scope by design.
+- **Deliberately thin mapping** (stream mode) — a peak/RMS envelope follower with
+  attack/release smoothing. Frequency analysis and volume-based effects are out of scope by
+  design; track-change awareness exists only as scenes-mode's rotation trigger.
 
 ## Quick start
 
@@ -79,6 +86,7 @@ Then in Roon:
 | [docs/PLAN.md](docs/PLAN.md) | Project plan: goals, feasibility analysis, architecture options, latency budget, milestones, risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component and data-flow reference for the code in `src/` |
 | [docs/NANOLEAF-PROTOCOL.md](docs/NANOLEAF-PROTOCOL.md) | Pairing, REST endpoints and the extControl v2 UDP wire format used here |
+| [docs/SCENES.md](docs/SCENES.md) | Scenes mode: per-track rotation of installed music scenes, config reference |
 | [docs/DEPLOY-WINDOWS-SERVICE.md](docs/DEPLOY-WINDOWS-SERVICE.md) | Windows service install & audio capture setup |
 | [docs/DEPLOY-HEADLESS.md](docs/DEPLOY-HEADLESS.md) | systemd / Docker deployment beside the Roon Core |
 

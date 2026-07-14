@@ -36,6 +36,9 @@ audio path works without it, so a Roon API outage never darkens the panels.
 | `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `identify` | http |
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |
+| `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle` (no Roon dependency) | — |
+| `src/scenes/picker.js` | Shuffle-bag scene rotation + include/exclude filtering; pure | — |
+| `src/scenes/rotator.js` | scenes mode glue: track events → power/select on the controller, 404 re-discovery, onStop policy | picker, client |
 
 ## Design rules
 

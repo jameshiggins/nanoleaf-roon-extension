@@ -1,4 +1,5 @@
 {
+  "mode": "stream",
   "nanoleaf": {
     "host": "192.168.1.50",
     "port": 16021,
@@ -15,7 +16,15 @@
     "captureArgs": []
   },
   "roon": {
-    "enabled": true
+    "enabled": true,
+    "zone": ""
+  },
+  "scenes": {
+    "include": [],
+    "exclude": [],
+    "musicOnly": true,
+    "onStop": "keep",
+    "minSeconds": 8
   },
   "mapping": {
     "attackMs": 5,

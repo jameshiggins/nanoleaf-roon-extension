@@ -17,7 +17,10 @@ microphone-based detection.
 **Out of scope (by requirement)**
 
 - Custom frequency analysis (FFT band splitting, beat detection, spectrum effects).
-- Playback state syncing (play/pause/seek-driven scenes).
+- Playback state syncing (play/pause/seek-driven scenes). *Scope change (v0.2): per-track
+  scene rotation was added by request — the extension now watches Roon track changes to pick a
+  different installed Nanoleaf music scene per track (see SCENES.md). Seek/pause-driven
+  effects remain out of scope.*
 - Volume-based effects (mapping zone volume to brightness).
 
 <a name="feasibility"></a>
