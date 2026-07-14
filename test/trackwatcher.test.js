@@ -179,6 +179,31 @@ test('zones_added with a genuinely new track still emits', () => {
   assert.equal(ev.track[0].title, 'NEW');
 });
 
+test('startup ordering: an already-playing zone at subscribe time must reach a live renderer', () => {
+  // Regression for the index.js bug where roon.start() ran before the renderer existed.
+  // Roon can be playing the instant we subscribe, so the first 'playing' fires immediately.
+  // The `renderer && renderer.acquire()` guard silently drops it if the renderer is null —
+  // and because the zone is now marked playing, no later 'playing' re-fires, so the panels
+  // never get taken while music plays. The fix is to subscribe only after the renderer is live.
+  const playingSnapshot = { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C' })] };
+  const makeRenderer = () => ({ acquires: 0, acquire() { this.acquires++; }, release() {} });
+
+  // Broken order: subscribe before the renderer is wired → the event is lost.
+  const wBad = new TrackWatcher();
+  let rendererBad = null;
+  wBad.on('playing', () => rendererBad && rendererBad.acquire());
+  wBad.handleEvent('Subscribed', playingSnapshot);
+  rendererBad = makeRenderer(); // renderer arrives too late
+  assert.equal(rendererBad.acquires, 0, 'event fired into a null renderer is lost — the original bug');
+
+  // Correct order: renderer live before subscribe → acquire fires on the initial snapshot.
+  const wGood = new TrackWatcher();
+  const rendererGood = makeRenderer();
+  wGood.on('playing', () => rendererGood && rendererGood.acquire());
+  wGood.handleEvent('Subscribed', playingSnapshot);
+  assert.equal(rendererGood.acquires, 1, 'renderer live before subscribe → acquire on the already-playing zone');
+});
+
 test('zones event reports matched vs all names for typo diagnostics', () => {
   const w = new TrackWatcher({ zone: 'bedroom' });
   let seen = null;

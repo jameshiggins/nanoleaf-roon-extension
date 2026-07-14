@@ -105,7 +105,9 @@ async function runService(configFile) {
       }
     });
     roon = new RoonExtension({ onZoneEvent: (response, msg) => watcher.handleEvent(response, msg) });
-    roon.start();
+    // NB: roon.start() is deferred until after the renderer exists (below). Roon can be
+    // playing the instant we subscribe, and that first 'playing' must reach the renderer —
+    // starting Roon here would fire it into a null renderer and we'd never acquire.
   }
   const setStatus = (msg, isErr) => {
     log.info(`status: ${msg}`);
@@ -146,6 +148,10 @@ async function runService(configFile) {
 
   renderer.start();
   source.start();
+
+  // Start Roon only now that the renderer is live, so the first 'playing' from an
+  // already-playing zone triggers acquire (see the deferral note above).
+  if (roon) roon.start();
 
   // Without Roon there is no play/idle signal, so hold the panels for the whole run.
   if (!cfg.roon.enabled) {
