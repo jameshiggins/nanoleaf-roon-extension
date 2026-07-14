@@ -171,3 +171,118 @@ test('stop() detaches listeners', async () => {
   await settle(rotator);
   assert.equal(client.calls.filter(([op]) => op === 'select').length, 0);
 });
+
+// --- regression tests from the adversarial review ---
+
+test('resume after onStop "off": playing event powers panels back on', async () => {
+  const client = fakeClient(MUSIC);
+  const { rotator, watcher } = makeRotator(client, { onStop: 'off' });
+  await rotator.start();
+  watcher.emit('track', { title: 'T1' });
+  watcher.emit('idle');            // pause → panels off
+  watcher.emit('playing');         // resume same track → no 'track' event fires
+  await settle(rotator);
+  const powers = client.calls.filter(([op]) => op === 'power').map(([, v]) => v);
+  assert.deepEqual(powers, [false, true], 'resume must power panels back on');
+});
+
+test('resume after a named onStop effect swaps back to a music scene', async () => {
+  const client = fakeClient([...MUSIC, ...STATIC]);
+  const { rotator, watcher } = makeRotator(client, { onStop: 'Snowfall' });
+  await rotator.start();
+  watcher.emit('track', { title: 'T1' });
+  watcher.emit('idle');            // pause → Snowfall
+  watcher.emit('playing');         // resume same track
+  await settle(rotator);
+  const selects = client.calls.filter(([op]) => op === 'select').map(([, n]) => n);
+  assert.equal(selects[1], 'Snowfall');
+  const resumed = selects[2];
+  assert.ok(MUSIC.some((e) => e.animName === resumed), `resume must select a music scene, got "${resumed}"`);
+});
+
+test('power restoration is never rate-limited by minSeconds', async () => {
+  const client = fakeClient(MUSIC);
+  let clock = 1000_000;
+  const { rotator, watcher } = makeRotator(client, { onStop: 'off', minSeconds: 8 }, { now: () => clock });
+  await rotator.start();
+  watcher.emit('track', { title: 'T1' });   // t=0: scene switch
+  await settle(rotator);
+  clock += 3000;
+  watcher.emit('idle');                     // t=3: stop → panels off
+  await settle(rotator);
+  clock += 2000;
+  watcher.emit('track', { title: 'T2' });   // t=5: new track inside the window
+  await settle(rotator);
+  const powers = client.calls.filter(([op]) => op === 'power').map(([, v]) => v);
+  assert.deepEqual(powers, [false, true], 'panels must come back on even within the rate-limit window');
+});
+
+test('start seeds poweredOff from the device (service restarted while panels off)', async () => {
+  const client = fakeClient(MUSIC);
+  client.getInfo = async () => ({ state: { on: { value: false } } });
+  const { rotator, watcher } = makeRotator(client);
+  await rotator.start();
+  watcher.emit('track', { title: 'T1' });
+  await settle(rotator);
+  const powers = client.calls.filter(([op]) => op === 'power').map(([, v]) => v);
+  assert.deepEqual(powers, [true], 'first track after restart must power panels on');
+});
+
+test('start tolerates getInfo failure (power state stays unknown-on)', async () => {
+  const client = fakeClient(MUSIC);
+  client.getInfo = async () => { throw new Error('timeout'); };
+  const { rotator } = makeRotator(client);
+  await rotator.start();
+  assert.equal(rotator.poweredOff, false);
+});
+
+test('onStop transient failure is retried until it lands', async () => {
+  const client = fakeClient(MUSIC);
+  let failures = 2;
+  const origPower = client.setPower.bind(client);
+  client.setPower = async (on) => {
+    if (failures-- > 0) throw new Error('EHOSTUNREACH');
+    return origPower(on);
+  };
+  const delays = [];
+  const { rotator, watcher } = makeRotator(client, { onStop: 'off' }, { delay: (ms) => { delays.push(ms); return Promise.resolve(); } });
+  await rotator.start();
+  watcher.emit('idle');
+  await settle(rotator);
+  assert.equal(delays.length, 2, 'two retries after two transient failures');
+  assert.deepEqual(client.calls.filter(([op]) => op === 'power'), [['power', false]]);
+});
+
+test('onStop with a wrong-case name is canonicalized to the installed effect', async () => {
+  const client = fakeClient([...MUSIC, ...STATIC]);
+  const { rotator, watcher } = makeRotator(client, { onStop: 'snowfall' });
+  await rotator.start();
+  watcher.emit('idle');
+  await settle(rotator);
+  const selects = client.calls.filter(([op]) => op === 'select').map(([, n]) => n);
+  assert.deepEqual(selects, ['Snowfall'], 'case-sensitive select must get the canonical name');
+});
+
+test('onStop naming a missing effect warns and degrades to keep', async () => {
+  const client = fakeClient(MUSIC);
+  const { rotator, watcher, statuses } = makeRotator(client, { onStop: 'Not Installed' });
+  await rotator.start();
+  assert.ok(statuses.some(([m, isErr]) => isErr && /Not Installed/.test(m)), 'user is warned at startup');
+  watcher.emit('idle');
+  await settle(rotator);
+  assert.equal(client.calls.filter(([op]) => op === 'select').length, 0, 'behaves like keep');
+});
+
+test('404 recovery reports the scene actually selected, not the vanished one', async () => {
+  const client = fakeClient(MUSIC);
+  const { rotator, watcher, statuses } = makeRotator(client);
+  await rotator.start();
+  const doomed = rotator.picker.bag[rotator.picker.bag.length - 1];
+  client.effects = client.effects.filter((e) => e.animName !== doomed);
+  watcher.emit('track', { title: 'T1' });
+  await settle(rotator);
+  assert.notEqual(rotator.currentScene, doomed, 'currentScene must be the replacement');
+  assert.ok(client.effects.some((e) => e.animName === rotator.currentScene));
+  const trackStatus = statuses.find(([m]) => m.startsWith('♪'));
+  assert.ok(trackStatus && trackStatus[0].includes(rotator.currentScene), 'status shows the real scene');
+});

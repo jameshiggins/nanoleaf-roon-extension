@@ -129,3 +129,60 @@ test('two zones playing: idle only when both stop', () => {
   w.handleEvent('Changed', { zones_changed: [zone('z2', 'Kitchen', 'paused', t)] });
   assert.equal(ev.idle, 1);
 });
+
+// --- regression tests from the adversarial review ---
+
+test('reconnect: fresh snapshot replaces state — vanished zones cannot wedge idle', () => {
+  const w = new TrackWatcher();
+  const ev = collect(w);
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C' })] });
+  assert.equal(ev.playing, 1);
+  w.handleEvent('NetworkError', undefined);
+  // while disconnected: playback stopped and z1's zone_id disappeared (regrouped)
+  w.handleEvent('Subscribed', { zones: [zone('z2', 'Kitchen', 'stopped', null)] });
+  assert.equal(ev.idle, 1, 'reconnect snapshot with nothing playing must emit idle');
+  assert.equal(w.playingZones.size, 0);
+  assert.deepEqual([...w.lastKey.keys()], ['z2'], 'stale zone_ids are gone');
+});
+
+test('reconnect: snapshot with a playing zone after quiet emits playing once', () => {
+  const w = new TrackWatcher();
+  const ev = collect(w);
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'stopped', null)] });
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C' })] });
+  assert.equal(ev.playing, 1);
+  assert.equal(ev.track.length, 0, 'snapshots never emit track');
+});
+
+test('zone transfer/regroup mid-song: removed+added same track in one message stays silent', () => {
+  const w = new TrackWatcher();
+  const ev = collect(w);
+  const t = { title: 'A', artist: 'B', album: 'C' };
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', t)] });
+  w.handleEvent('Changed', {
+    zones_removed: ['z1'],
+    zones_added: [zone('z9', 'Study + 1', 'playing', t)],
+  });
+  assert.equal(ev.track.length, 0, 'same song under a new zone_id is not a track change');
+  assert.equal(w.lastKey.get('z9'), 'A|B|C|200', 'new zone_id seeded silently');
+  // ...but a real track change on the new zone_id still fires
+  w.handleEvent('Changed', { zones_changed: [zone('z9', 'Study + 1', 'playing', { title: 'D', artist: 'B', album: 'C' })] });
+  assert.equal(ev.track.length, 1);
+});
+
+test('zones_added with a genuinely new track still emits', () => {
+  const w = new TrackWatcher();
+  const ev = collect(w);
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C' })] });
+  w.handleEvent('Changed', { zones_added: [zone('z9', 'Kitchen', 'playing', { title: 'NEW', artist: 'B', album: 'C' })] });
+  assert.equal(ev.track.length, 1);
+  assert.equal(ev.track[0].title, 'NEW');
+});
+
+test('zones event reports matched vs all names for typo diagnostics', () => {
+  const w = new TrackWatcher({ zone: 'bedroom' });
+  let seen = null;
+  w.on('zones', (z) => { seen = z; });
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'stopped', null), zone('z2', 'Kitchen', 'stopped', null)] });
+  assert.deepEqual(seen, { matched: [], all: ['Study', 'Kitchen'] });
+});

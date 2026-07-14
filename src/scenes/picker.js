@@ -49,11 +49,14 @@ class ScenePicker {
 function filterScenes(available, { include = [], exclude = [] } = {}) {
   const lower = (s) => s.toLowerCase();
   const availByLower = new Map(available.map((n) => [lower(n), n]));
+  let names;
   if (include.length > 0) {
-    return include.map((n) => availByLower.get(lower(n))).filter(Boolean);
+    names = include.map((n) => availByLower.get(lower(n))).filter(Boolean);
+  } else {
+    const excluded = new Set(exclude.map(lower));
+    names = available.filter((n) => !excluded.has(lower(n)));
   }
-  const excluded = new Set(exclude.map(lower));
-  return available.filter((n) => !excluded.has(lower(n)));
+  return [...new Set(names)]; // duplicates would defeat the picker's no-repeat guarantee
 }
 
 module.exports = { ScenePicker, filterScenes };

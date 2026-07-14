@@ -97,7 +97,7 @@ async function runService(configFile) {
  */
 async function runScenesMode(cfg) {
   const { TrackWatcher } = require('./roon/trackwatcher');
-  const { SceneRotator } = require('./scenes/rotator');
+  const { SceneRotator, SceneConfigError } = require('./scenes/rotator');
   const { RoonExtension } = require('./roon/extension');
 
   const client = new NanoleafClient(cfg.nanoleaf);
@@ -109,6 +109,13 @@ async function runScenesMode(cfg) {
     roon.setStatus(msg, isErr);
   };
 
+  // surface a zone-name typo instead of silently matching nothing forever
+  watcher.on('zones', ({ matched, all }) => {
+    if (cfg.roon.zone && matched.length === 0) {
+      setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
+    }
+  });
+
   const rotator = new SceneRotator({ client, watcher, config: cfg.scenes, onStatus: setStatus });
   try {
     await rotator.start(); // validates token + discovers scenes before touching Roon
@@ -117,8 +124,11 @@ async function runScenesMode(cfg) {
       console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
       process.exit(EXIT_REPAIR_NEEDED);
     }
-    console.error(err.message);
-    process.exit(EXIT_CONFIG);
+    if (err instanceof SceneConfigError) {
+      console.error(err.message);
+      process.exit(EXIT_CONFIG);
+    }
+    throw err; // transient (controller offline etc.) → exit 1, service manager retries
   }
 
   roon.start();

@@ -54,3 +54,11 @@ test('filterScenes: no filters passes everything through', () => {
   assert.deepEqual(filterScenes(all, {}), all);
   assert.deepEqual(filterScenes(all), all);
 });
+
+test('filterScenes: duplicates are collapsed (they would defeat no-repeat)', () => {
+  assert.deepEqual(
+    filterScenes(['Ripple', 'Sound Bar'], { include: ['ripple', 'Ripple', 'RIPPLE'] }),
+    ['Ripple']
+  );
+  assert.deepEqual(filterScenes(['A', 'A', 'B'], {}), ['A', 'B']);
+});

@@ -80,11 +80,21 @@ Behavior details:
   `Living Room + 1`.
 - **Deleted/renamed scenes** (404 from the controller) cause a one-shot re-discovery and a
   different pick; the pool refreshes automatically.
-- **`onStop`**: `"keep"` leaves the last scene running, `"off"` powers the panels down (and
-  back on at the next track), or name any installed effect (e.g. a calm static scene) to show
-  while paused/stopped.
+- **`onStop`**: `"keep"` leaves the last scene running, `"off"` powers the panels down, or
+  name any installed effect (e.g. a calm static scene) to show while paused/stopped. Names are
+  matched case-insensitively against what's installed; an unknown name warns at startup and
+  falls back to `"keep"`. Transient network failures during the stop action are retried, so a
+  Wi-Fi blip can't leave the panels on all night.
+- **Resuming** a paused track undoes the stop action immediately — panels power back on, or
+  the stop effect is swapped for a music scene — without waiting for the next track boundary.
+  Power restoration is never delayed by `minSeconds`.
 - Startup and Roon reconnects never count as track changes — the current scene is left alone
-  until the next real track transition.
+  until the next real track transition. On startup the extension reads the panels' power
+  state, so restarting the service while `onStop: "off"` has them dark still recovers on the
+  next track. Regrouping zones or transferring playback mid-song does not trigger a switch.
+- With `"zone": ""` every playing zone in the house rotates the panels and `onStop` waits for
+  *all* zones to stop — set a zone name if that's not what you want. A zone name that matches
+  nothing shows a warning (with the list of available zones) in the Roon extension status.
 
 ## Switching between modes
 
