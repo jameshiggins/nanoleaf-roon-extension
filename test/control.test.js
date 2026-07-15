@@ -158,3 +158,14 @@ test('frames are only emitted while a client is connected', async () => {
     server.stop();
   }
 });
+
+test('server reports reachable URLs (specific host binds to that host)', async () => {
+  const renderer = makeRenderer();
+  const server = new ControlServer({ renderer, port: 0, host: '127.0.0.1', frameHz: 20 });
+  const port = await server.start();
+  try {
+    assert.deepEqual(server.urls, [`http://127.0.0.1:${port}`]);
+  } finally {
+    server.stop();
+  }
+});

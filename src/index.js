@@ -160,8 +160,8 @@ async function runService(configFile) {
       frameHz: cfg.control.frameHz,
     });
     try {
-      const port = await control.start();
-      setStatus(`Companion app at http://<this-host>:${port}`);
+      await control.start();
+      setStatus(`Companion app: ${control.urls.join('  ')}`);
     } catch (err) {
       log.warn(`companion app server failed to start: ${err.message}`);
       control = null;

@@ -33,8 +33,11 @@ It's on by default. Config (`config.json`):
 }
 ```
 
-On startup the extension logs the address, e.g. `companion app API on http://0.0.0.0:8787`. From
-another device use the extension host's LAN IP: `http://<extension-ip>:8787`.
+On startup the extension logs the exact URL(s) to open, e.g.
+`companion app ready — open one of these on your Shield: http://192.168.50.42:8787`. The
+"extension IP" is just the LAN address of the machine you run `npm start` on (not the Nanoleaf,
+not the Shield). If you need to find it yourself: `hostname -I` (Linux/Pi),
+`ipconfig getifaddr en0` (macOS), `ipconfig` → IPv4 (Windows), or the router's client list.
 
 > No authentication — this is meant for a trusted home LAN. Bind to `127.0.0.1` (and use the
 > native app on the same machine, or an SSH tunnel) if that's a concern.

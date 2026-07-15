@@ -19,9 +19,26 @@
  */
 
 const http = require('node:http');
+const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const log = require('../log')('control');
+
+/** Reachable http URLs for the companion app, given the bound host and port. */
+function reachableUrls(host, port) {
+  // when bound to all interfaces, list every non-internal IPv4 so the user
+  // sees the address to type on their Shield instead of "0.0.0.0"
+  if (host === '0.0.0.0' || host === '::') {
+    const urls = [];
+    for (const addrs of Object.values(os.networkInterfaces())) {
+      for (const a of addrs || []) {
+        if (a.family === 'IPv4' && !a.internal) urls.push(`http://${a.address}:${port}`);
+      }
+    }
+    return urls.length ? urls : [`http://<this-host>:${port}`];
+  }
+  return [`http://${host}:${port}`];
+}
 
 const WEBAPP_DIR = path.join(__dirname, 'webapp');
 const STATIC = {
@@ -95,7 +112,8 @@ class ControlServer {
       this.renderer.on('rotate', this._onRotate);
       this.server.listen(this.port, this.host, () => {
         const addr = this.server.address();
-        log.info(`companion app API on http://${this.host}:${addr.port} (open it on your Shield)`);
+        this.urls = reachableUrls(this.host, addr.port);
+        log.info(`companion app ready — open one of these on your Shield: ${this.urls.join('  ')}`);
         resolve(addr.port);
       });
     });
