@@ -10,6 +10,7 @@ const { prepareLayout } = require('./visuals/layout');
 const { VisualRenderer } = require('./visuals/renderer');
 const { describeVisuals } = require('./visuals/visualizers');
 const { generatePalettes } = require('./visuals/palettes');
+const { startHeartbeat } = require('./health');
 const log = require('./log')('main');
 
 const EXIT_CONFIG = 2;
@@ -88,6 +89,10 @@ async function runService(configFile) {
     process.exit(EXIT_CONFIG);
   }
 
+  // Liveness heartbeat for the external watchdog (scripts/watchdog.ps1). Starts before
+  // anything else so a stall during startup is caught too.
+  const stopHeartbeat = startHeartbeat();
+
   // Roon: status line + track-change rotation + panel ownership. Playback takes the
   // panels; going idle hands them back to whatever effect they were showing before.
   let roon = null;
@@ -164,6 +169,7 @@ async function runService(configFile) {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down');
+    stopHeartbeat();
     source.stop();
     // Hand the panels back before exiting, rather than leaving them stuck in extControl.
     try {

@@ -94,3 +94,21 @@ git -C C:\opt\nanoleaf-roon-extension pull
 npm --prefix C:\opt\nanoleaf-roon-extension install
 nssm start NanoleafRoon
 ```
+
+## 6. Liveness watchdog (recommended)
+
+NSSM restarts the service if the process *exits*, but not if the Node event loop
+**wedges** while the process stays alive (a rare freeze where streaming, Roon, and
+logging all stop at once). The extension guards against this: `src/health.js` touches
+`logs/heartbeat` every few seconds, and `scripts/watchdog.ps1` — a SYSTEM scheduled
+task — restarts the service if that heartbeat goes stale (~15 s), so a freeze
+self-heals in ~20 s. It also brings the service back up if it is stopped for any reason.
+
+Install once, from an **elevated** shell:
+
+```powershell
+pwsh -File C:\opt\nanoleaf-roon-extension\scripts\install-watchdog.ps1
+```
+
+Check it: `Get-ScheduledTask NanoleafWatchdog` and `logs\watchdog.log`.
+Remove it: `Unregister-ScheduledTask -TaskName NanoleafWatchdog -Confirm:$false`.
