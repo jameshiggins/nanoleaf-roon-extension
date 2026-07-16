@@ -300,10 +300,15 @@ class ChaseEngine extends BaseEngine {
 class VuEngine extends BaseEngine {
   render(f) {
     if (this.opts.vertical) {
+      if (f.rms < 0.02) return frame(this.layout, () => BLACK); // dark only in true silence
+      // Bottom-up meter, but every panel stays lit: below the level fills hot,
+      // above the level gets a dim wash rather than going black.
       return frame(this.layout, (p) => {
-        if (f.rms < 0.02 || p.ny > f.rms) return BLACK;
-        const heat = p.ny / Math.max(f.rms, 0.01); // top of the bar runs hot
-        return dim(hsv(heat > 0.75 ? this.palette.hit : this.palette.base, 1, 1), Math.max(f.rms, 0.3));
+        if (p.ny <= f.rms) {
+          const heat = p.ny / Math.max(f.rms, 0.01); // top of the fill runs hot
+          return dim(hsv(heat > 0.75 ? this.palette.hit : this.palette.base, 1, 1), Math.max(f.rms, 0.3));
+        }
+        return dim(hsv(this.palette.base, 1, 1), 0.15 + 0.25 * f.energy); // wash above the fill
       });
     }
     return frame(this.layout, (p) => {
