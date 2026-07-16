@@ -8,6 +8,9 @@ on:
     paths: ['android/**', '.github/workflows/android.yml']
   workflow_dispatch:
 
+permissions:
+  contents: write   # publish the APK to a GitHub Release
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,9 +37,28 @@ jobs:
       - name: Build debug APK
         run: gradle -p android assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk nanoleaf-roon-visualizer.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nanoleaf-roon-visualizer-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: nanoleaf-roon-visualizer.apk
           if-no-files-found: error
+
+      # Publish to a rolling "latest" release so the Shield can download the APK
+      # directly (e.g. via the Downloader app) from a stable URL, no login needed.
+      - name: Publish to latest release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest APK build
+          prerelease: true
+          make_latest: false
+          files: nanoleaf-roon-visualizer.apk
+          body: >
+            Auto-built Android TV companion app (debug APK).
+            Download nanoleaf-roon-visualizer.apk below and sideload it onto your
+            Shield — see docs/COMPANION-APP.md.
