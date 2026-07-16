@@ -17,6 +17,7 @@
     "pair": "node src/index.js --pair",
     "discover": "node src/index.js --discover",
     "visuals": "node src/index.js --list-visuals",
+    "analyze": "node tools/analyze.js",
     "test": "node --test"
   },
   "dependencies": {

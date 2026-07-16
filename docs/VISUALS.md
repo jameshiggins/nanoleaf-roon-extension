@@ -80,6 +80,33 @@ hundreds). 30+ visualizers × 36 palettes ≈ **1,000+ distinct looks** in rotat
 - Rotation is a **shuffle bag**: every visualizer (and palette) is used once before any repeats,
   and never the same one twice in a row.
 
+## Checking a track really goes 0-to-max
+
+To confirm the visualization uses the full range on real music — quiet parts near black,
+loud parts at full brightness — run a song through the actual analysis + render pipeline offline:
+
+```bash
+npm run analyze -- /path/to/song.flac                 # needs ffmpeg on PATH
+npm run analyze -- song.mp3 --gain 1.8 --visual bars  # try a gain / a specific visual
+node tools/analyze.js capture.raw --raw               # s16le 44100 stereo, no ffmpeg
+```
+
+It prints the dynamic range of every audio feature (rms, bass/mid/treble, energy), the resulting
+**on-panel brightness** (peak % of full, median, a timeline sparkline across the track), and a
+verdict:
+
+```
+On-panel brightness (0-255):
+  peak     █████████████··············· 119  (47% of full)
+  ...
+Verdict:
+  ✗ Under-driven — peaks only reach 47% of full. Set visuals.gain to ~1.68 so loud parts hit max.
+  ✓ Quiet passages fade toward black — good 0-to-max contrast across the track.
+```
+
+If peaks fall short of full, it tells you the `visuals.gain` to set so the loudest moments hit
+maximum brightness. This is the real DSP + renderer, so what it measures is what the panels do.
+
 ## Tuning the feel
 
 - Visuals too dim on quiet recordings → raise `visuals.gain` (e.g. `1.5`–`2.5`).

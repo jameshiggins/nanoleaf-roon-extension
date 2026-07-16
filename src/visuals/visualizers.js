@@ -309,9 +309,9 @@ class VuEngine extends BaseEngine {
     this.peakRef = Math.max(level, (this.peakRef ?? 0.25) * decay, 0.06);
     let raw = Math.min(1, level / this.peakRef);         // 0..1, hits 1 on peaks
     if (onset) raw = 1;                                  // beats slam the bar to the top
-    // punchy peak-hold: snap up instantly, drop away fast (~0.25 s) so it
-    // reads as a percussive hit rather than a smooth glide.
-    this.held = Math.max(raw, (this.held ?? 0) - dt / 250);
+    // snappy peak-hold: snap up instantly, drop away fast (~0.15 s) so it
+    // reads as a sharp percussive hit.
+    this.held = Math.max(raw, (this.held ?? 0) - dt / 150);
     return this.held;
   }
 
