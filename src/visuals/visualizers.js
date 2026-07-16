@@ -303,21 +303,22 @@ class VuEngine extends BaseEngine {
    * spans the FULL range — loud moments reach the top panel, quiet ones recede —
    * regardless of how hot the track is mastered. Returns a fill in [0, 1].
    */
-  _fill(level, dtMs) {
+  _fill(level, dtMs, onset) {
     const dt = dtMs || 33;
     const decay = Math.exp(-dt / 2500);                  // ~2.5 s peak memory
     this.peakRef = Math.max(level, (this.peakRef ?? 0.25) * decay, 0.06);
-    const raw = Math.min(1, level / this.peakRef);       // 0..1, hits 1 on peaks
-    // peak-hold: snap up instantly, then ease down over ~0.7 s so the bar
-    // visibly sweeps from the top panel back down between beats.
-    this.held = Math.max(raw, (this.held ?? 0) - dt / 700);
+    let raw = Math.min(1, level / this.peakRef);         // 0..1, hits 1 on peaks
+    if (onset) raw = 1;                                  // beats slam the bar to the top
+    // punchy peak-hold: snap up instantly, drop away fast (~0.25 s) so it
+    // reads as a percussive hit rather than a smooth glide.
+    this.held = Math.max(raw, (this.held ?? 0) - dt / 250);
     return this.held;
   }
 
   render(f, dtMs) {
     if (this.opts.vertical) {
       if (f.rms < 0.02) return frame(this.layout, () => BLACK); // dark only in true silence
-      const fill = this._fill(f.rms, dtMs);
+      const fill = this._fill(f.rms, dtMs, f.onset);
       // Bottom-up meter that reaches the top on peaks; every panel stays lit —
       // below the fill runs hot, above it gets a dim palette wash.
       return frame(this.layout, (p) => {
@@ -328,7 +329,7 @@ class VuEngine extends BaseEngine {
         return dim(hsv(this.palette.base, 1, 1), 0.15 + 0.25 * f.energy); // wash above the fill
       });
     }
-    const fill = this._fill(Math.max(f.left, f.right), dtMs);
+    const fill = this._fill(Math.max(f.left, f.right), dtMs, f.onset);
     return frame(this.layout, (p) => {
       const leftSide = p.nx < 0.5;
       const reach = leftSide ? (0.5 - p.nx) * 2 : (p.nx - 0.5) * 2; // 0 center → 1 edge
