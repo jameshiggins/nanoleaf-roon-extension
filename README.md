@@ -3,11 +3,12 @@
 A [Roon](https://roon.app) extension that turns your music into **Nanoleaf light shows rendered
 from the audio stream itself** — not from a microphone.
 
-It taps the PCM audio straight out of Roon, analyzes it (loudness, stereo, bass/mid/treble bands,
-beat detection), and drives the panels frame-by-frame over Nanoleaf's low-latency **external
-control (extControl v2) UDP API**. Every visual you see is computed here and streamed to the
-panels; the Nanoleaf mic is never involved. On each track change it rotates to a fresh
-**visualizer × palette** so the look keeps changing with the music.
+**This is a PCM → Nanoleaf pipeline. No microphone, anywhere.** It taps the raw PCM audio
+straight out of Roon, analyzes it (loudness, stereo, bass/mid/treble bands, beat detection), and
+drives the panels frame-by-frame over Nanoleaf's low-latency **external control (extControl v2)
+UDP API**. Every visual is computed from the digital audio itself and streamed to the panels — no
+room mic, no Rhythm-module mic, no listening to speakers. On each track change it rotates to a
+fresh **visualizer × palette** so the look keeps changing with the music.
 
 ```
 Roon Core ──PCM──▶ nanoleaf-roon-extension ──UDP frames──▶ Nanoleaf panels

@@ -2,10 +2,12 @@
 
 ## 1. Goal
 
-Produce good **music visualizations on Nanoleaf panels, driven by Roon's audio stream** — not by
-a microphone. There is one behavior: analyze the stream, render a visualization from it, stream
-it to the panels, and rotate the look on every track change. The intended target is a networked
-amp (e.g. a Hegel) via a sample-synced loopback zone.
+Produce good **music visualizations on Nanoleaf panels, driven by the PCM audio stream from
+Roon** — never by a microphone. This is a PCM-in, no-mic pipeline: read the raw digital audio,
+analyze it, render a visualization from it, stream that to the panels, and rotate the look on
+every track change. The intended target is a networked amp (e.g. a Hegel) via a sample-synced
+loopback zone. No room mic, no Rhythm-module mic — the panels react to the bits, not to sound in
+the air.
 
 **In scope**
 
@@ -23,25 +25,25 @@ amp (e.g. a Hegel) via a sample-synced loopback zone.
 - Playback state syncing beyond track-change rotation (no seek/pause-driven scene scripting).
 - Volume-based effects (mapping zone volume to brightness).
 
-> **Scope evolution.** v0.1 deliberately avoided frequency analysis and shipped a loudness-only
-> envelope; a v0.2 experiment rotated the device's own mic-driven Rhythm scenes. Both are
-> **removed**. Per the project owner's direction — "it should be good audio visuals based on the
-> stream" — the extension now does its own analysis (bands + onsets) and renders the visuals
-> itself. The mic is never used.
+> **Design history.** Two earlier experiments were removed: a loudness-only envelope (no
+> frequency analysis), and a mode that rotated the device's own **mic-driven** Rhythm scenes.
+> The mic-based approach is explicitly rejected. The shipping design is a pure **PCM → panels**
+> pipeline: the extension analyzes the digital audio itself and renders the visuals. No
+> microphone is used at any point.
 
 <a name="feasibility"></a>
-## 2. The constraint that shapes everything
+## 2. PCM in, no microphone — how the audio reaches the panels
 
-Nanoleaf's public API **cannot ingest audio over the network.** extControl (v1/v2) is a UDP
+The audio source is always the **raw PCM stream tapped from Roon** (§3) — never a microphone.
+The extension does the analysis and rendering, then sends the result to the panels.
+
+One protocol detail decides *where* the analysis happens: Nanoleaf's extControl (v1/v2) is a UDP
 protocol whose payload is *per-panel RGBW color frames* (see
-[NANOLEAF-PROTOCOL.md](NANOLEAF-PROTOCOL.md)); there is no endpoint that accepts PCM, and the
-on-device Rhythm engine reads only the built-in microphone or the Light Panels Rhythm module's
-3.5 mm aux jack.
-
-Since the panels can't analyze our audio and the mic is exactly what we're trying to avoid, the
-**analysis and the visualization both happen in the extension**, and we send finished color
-frames. This is what makes the visuals fully ours to design — bands, beats, motion, palettes —
-rather than being limited to what the device's mic engine produces. It works on every
+[NANOLEAF-PROTOCOL.md](NANOLEAF-PROTOCOL.md)) — the panels render frames, they don't analyze
+audio, and their on-device Rhythm engine only listens to a microphone (built-in, or the Light
+Panels Rhythm module's mic/aux). Since a mic is exactly what we're avoiding, the **analysis and
+the visualization both happen here, from the PCM**, and we stream finished color frames. That
+keeps the visuals fully ours to design — bands, beats, motion, palettes — and works on every
 extControl-capable device (Shapes, Elements, Lines, Canvas, gen-2 Light Panels) with no extra
 hardware.
 
