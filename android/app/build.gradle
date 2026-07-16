@@ -26,6 +26,9 @@ android {
 }
 
 dependencies {
+    // Align every transitive Kotlin stdlib module to one version — androidx pulls
+    // both kotlin-stdlib 1.8.x and legacy kotlin-stdlib-jdk8 1.6.x, which collide
+    // as duplicate classes without this BOM.
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.9.24')
     implementation 'androidx.appcompat:appcompat:1.7.0'
-    implementation 'androidx.webkit:webkit:1.11.0'
 }
