@@ -17,7 +17,8 @@
 const BINS = 36;           // hue histogram resolution (10° per bin)
 const MIN_SAT = 0.18;      // below this a pixel is "gray" — no reliable hue
 const MIN_VAL = 0.12;      // below this a pixel is "black" — no reliable hue
-const HUE_APART = 25;      // accent/hit must sit this many degrees from base
+const HUE_APART = 25;      // swatches must sit this many degrees apart
+const MAX_SWATCHES = 6;    // most distinct colors we pull from one cover
 
 /** RGB (0-255) → { h: 0-360, s: 0-1, v: 0-1 }. */
 function rgbToHsv(r, g, b) {
@@ -79,23 +80,25 @@ function extractPalette(rgba, width, height, opts = {}) {
   peaks.sort((x, y) => y.weight - x.weight);
 
   const base = peaks[0].hue;
-  // Accent + hit: the next strongest peaks that are hue-distinct from base and
-  // from each other, so a busy cover yields three real colors.
+  // Pull up to MAX_SWATCHES distinct dominant hues so the multi-color scenes can
+  // paint the whole cover, not just three roles.
   const chosen = [base];
   for (const p of peaks.slice(1)) {
     if (chosen.every((h) => hueDist(h, p.hue) >= HUE_APART)) chosen.push(p.hue);
-    if (chosen.length === 3) break;
+    if (chosen.length === MAX_SWATCHES) break;
   }
-  // Monochrome cover (one dominant hue): fan out so scenes still have contrast.
-  while (chosen.length < 3) {
-    chosen.push((base + (chosen.length === 1 ? 30 : 180)) % 360);
-  }
+  // Guarantee at least three for the base/accent/hit roles + contrast on a
+  // monochrome cover.
+  const fan = [30, 180, 90, 210, 150];
+  let fi = 0;
+  while (chosen.length < 3) chosen.push((base + fan[fi++ % fan.length]) % 360);
 
   return {
     name: opts.name || 'Album',
     base: chosen[0],
     accent: chosen[1],
     hit: chosen[2],
+    swatches: chosen,   // 3–6 dominant hues, most-prominent first
     sat: opts.sat != null ? opts.sat : 0.9,
     val: opts.val != null ? opts.val : 1.0,
   };

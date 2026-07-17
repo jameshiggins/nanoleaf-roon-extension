@@ -95,16 +95,23 @@ const PALETTES = generatePalettes(36);
 /**
  * Hand-picked palettes that live outside the procedural set. Unlike the
  * generated palettes — pure hues rendered at full saturation — these may carry
- * `sat` and `val` (0..1) to mute the whole look. The renderer applies them as a
- * post-render tone pass, so one muted palette fades every visualizer at once.
+ * `sat`/`val` (0..1) to mute the whole look (the renderer applies them as a
+ * post-render tone pass) and a `swatches` array of hues that the multi-color
+ * scenes paint through.
  *
- * `Retro` is a '70s harvest wash: mustard-gold background, avocado motion,
- * burnt-orange beat hits — desaturated and slightly dimmed so it reads vintage
- * (earthy khaki/olive) rather than neon. Modeled on the Nanoleaf community
- * scene "Vintage Modern".
+ * `Vintage Modern` mirrors the Nanoleaf community scene of the same name
+ * (dark__cake__090), read straight off the controller: six muted colors — rust,
+ * sea green, olive, gold, amber, orange. We keep all six as swatches and mute
+ * via the tone pass to match the scene's low-saturation, vintage feel. The
+ * base/accent/hit trio (amber / green / rust) drives the 3-color scenes.
  */
 const CURATED = [
-  { name: 'Retro', base: 45, accent: 82, hit: 15, sat: 0.72, val: 0.9 },
+  {
+    name: 'Vintage Modern',
+    swatches: [41, 135, 4, 23, 51, 83],
+    base: 41, accent: 135, hit: 4,
+    sat: 0.6, val: 0.85,
+  },
 ];
 
 /**

@@ -128,11 +128,11 @@ test('empty include/exclude intersection throws at construction', () => {
 
 test('visuals.palette pins the palette while scenes still rotate', () => {
   const seq = (() => { let s = 0.11; return () => (s = (s * 9301 + 0.4931) % 1); })();
-  const { renderer } = make({ palette: 'Retro', include: ['wheel', 'ripple', 'sparkle', 'fire'] }, { rng: seq });
+  const { renderer } = make({ palette: 'Vintage Modern', include: ['wheel', 'ripple', 'sparkle', 'fire'] }, { rng: seq });
   const visuals = new Set();
   for (let i = 0; i < 16; i++) {
     renderer.rotate(false);
-    assert.equal(renderer.currentPalette.name, 'Retro', 'palette stays pinned across rotations');
+    assert.equal(renderer.currentPalette.name, 'Vintage Modern', 'palette stays pinned across rotations');
     visuals.add(renderer.currentName);
   }
   assert.ok(visuals.size > 1, `scenes should still rotate, saw ${visuals.size}`);
@@ -141,14 +141,14 @@ test('visuals.palette pins the palette while scenes still rotate', () => {
 
 test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () => {
   // The wall can't be observed from a headless run, so verify the color math:
-  // the same scene + hues, rendered with Retro's sat/val vs a full-saturation
-  // palette, must come out measurably less saturated (and warm).
+  // the same scene + hues, rendered with Vintage Modern's sat/val vs a
+  // full-saturation palette, must come out measurably less saturated (and warm).
   const { renderer } = make({ include: ['pulse'] });
   renderer.rotate(true); // establish a scene so renderFrame has a visual
   for (let i = 0; i < 12; i++) { renderer.features.onChunk(loudChunk()); renderer.renderFrame(); } // raise gate
 
-  const plainPal = { name: 'Plain', base: 45, accent: 82, hit: 15 }; // Retro hues, full saturation
-  const retroPal = resolvePalette('Retro');                          // same hues, sat .72 / val .9
+  const plainPal = { name: 'Plain', base: 41, accent: 135, hit: 4 }; // Vintage Modern hues, full saturation
+  const retroPal = resolvePalette('Vintage Modern');                 // same hues, muted sat/val
 
   renderer.features.onChunk(loudChunk());
   renderer._apply('pulse', plainPal, 'test');
@@ -175,14 +175,14 @@ test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () 
     meanSat(muted) < meanSat(plain) - 0.05,
     `muted (${meanSat(muted).toFixed(3)}) should be less saturated than plain (${meanSat(plain).toFixed(3)})`
   );
-  assert.ok(isWarm(muted), 'retro frame reads warm (mean R > mean B)');
+  assert.ok(isWarm(muted), 'vintage frame reads warm (mean R > mean B)');
 });
 
 test('setLivePalette overrides the pin, rebuilds the visual, persists across rotations; clear reverts', () => {
   const seq = (() => { let s = 0.2; return () => (s = (s * 7919 + 0.577) % 1); })();
-  const { renderer } = make({ palette: 'Retro', include: ['pulse', 'wheel', 'ripple'] }, { rng: seq });
+  const { renderer } = make({ palette: 'Vintage Modern', include: ['pulse', 'wheel', 'ripple'] }, { rng: seq });
   renderer.rotate(true);
-  assert.equal(renderer.currentPalette.name, 'Retro', 'starts on the pin');
+  assert.equal(renderer.currentPalette.name, 'Vintage Modern', 'starts on the pin');
 
   const album = { name: 'Album', base: 200, accent: 40, hit: 300, sat: 0.9, val: 1 };
   renderer.setLivePalette(album);
@@ -192,7 +192,7 @@ test('setLivePalette overrides the pin, rebuilds the visual, persists across rot
   for (let i = 0; i < 6; i++) { renderer.rotate(false); assert.equal(renderer.currentPalette.name, 'Album', 'live palette survives scene rotation'); }
 
   renderer.clearLivePalette();
-  assert.equal(renderer.currentPalette.name, 'Retro', 'clearing reverts to the pin');
+  assert.equal(renderer.currentPalette.name, 'Vintage Modern', 'clearing reverts to the pin');
 });
 
 test('clearLivePalette with no pin falls back to a generated palette, not dark', () => {

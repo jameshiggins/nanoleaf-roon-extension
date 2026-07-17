@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { visualNames, describeVisuals, createVisual } = require('../src/visuals/visualizers');
 const { generatePalettes } = require('../src/visuals/palettes');
+const { rgbToHsv } = require('../src/visuals/albumpalette');
 
 const PALETTE = generatePalettes(1)[0];
 
@@ -94,6 +95,30 @@ test('a beat visibly brightens the pulse visualizer', () => {
 
 test('createVisual rejects an unknown name', () => {
   assert.throws(() => createVisual('nope', LAYOUT, PALETTE), /unknown visual/);
+});
+
+test('multi-color scenes paint the whole swatch set; without swatches they stay few', () => {
+  // distinct strongly-colored hues a scene paints over a run of beats, bucketed to 30°
+  const distinctHues = (name, palette) => {
+    const viz = createVisual(name, LAYOUT, palette, seqRng());
+    const seen = new Set();
+    for (let i = 0; i < 60; i++) {
+      const frame = viz.render({ ...LOUD, onset: i % 2 === 0 }, 33);
+      for (const p of frame) {
+        const { h, s, v } = rgbToHsv(p.r, p.g, p.b);
+        if (s > 0.35 && v > 0.2) seen.add(Math.round(h / 30) * 30 % 360);
+      }
+    }
+    return seen;
+  };
+  const swatched = { name: 'S', base: 0, accent: 60, hit: 120, swatches: [0, 60, 120, 180, 240, 300] };
+  const plain = { name: 'P', base: 0, accent: 60, hit: 120 }; // no swatches → old accent/hit behavior
+  for (const scene of ['sections', 'ripple', 'streaks', 'sparkle']) {
+    const rich = distinctHues(scene, swatched);
+    const few = distinctHues(scene, plain);
+    assert.ok(rich.size > few.size, `${scene}: swatched (${rich.size}) should use more hues than plain (${few.size})`);
+    assert.ok(rich.size >= 4, `${scene}: swatched should paint >=4 distinct hues, got ${rich.size}`);
+  }
 });
 
 test('single-panel layout is handled by every visualizer', () => {

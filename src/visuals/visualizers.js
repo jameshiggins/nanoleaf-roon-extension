@@ -37,11 +37,26 @@ class BaseEngine {
     this.opts = opts;
     this.rng = rng;
     this.flash = 0;
+    // Album (and Vintage Modern) palettes carry a swatch set of up to 6 hues;
+    // scenes that place discrete colored elements paint through the whole set.
+    // Absent for the generated palettes, so their look is unchanged.
+    this.swatches = palette.swatches && palette.swatches.length ? palette.swatches : null;
+    this._swatchI = 0;
   }
   decayFlash(f, dtMs, ms = 180) {
     this.flash = Math.max(0, this.flash - dtMs / ms);
     if (f.onset) this.flash = 1;
     return this.flash;
+  }
+  /** Next hue in the swatch set (cycles — guarantees every color is used). */
+  nextSwatch() {
+    const h = this.swatches[this._swatchI % this.swatches.length];
+    this._swatchI++;
+    return h;
+  }
+  /** A random hue from the swatch set. */
+  randSwatch() {
+    return this.swatches[Math.floor(this.rng() * this.swatches.length)];
   }
 }
 
@@ -109,7 +124,7 @@ class RippleEngine extends BaseEngine {
     this.ripples.push({
       cx, cy,
       radius: this.opts.implode ? 1.8 : 0,
-      hue: this.hueFlip ? this.palette.accent : this.palette.hit,
+      hue: this.swatches ? this.nextSwatch() : (this.hueFlip ? this.palette.accent : this.palette.hit),
       strength: 0.5 + 0.5 * f.energy,
     });
     if (this.ripples.length > 4) this.ripples.shift();
@@ -155,7 +170,7 @@ class StreaksEngine extends BaseEngine {
       pos: dir > 0 ? -0.15 : 1.15,
       dir,
       speed: 1.2 + 1.5 * f.energy,
-      hue: this.rng() < 0.5 ? this.palette.accent : this.palette.hit,
+      hue: this.swatches ? this.randSwatch() : (this.rng() < 0.5 ? this.palette.accent : this.palette.hit),
       lane: this.rng(), // cross-axis center for rain mode
     });
     if (this.streaks.length > 4) this.streaks.shift();
@@ -205,8 +220,14 @@ class WheelEngine extends BaseEngine {
     const flash = this.decayFlash(f, dtMs, this.opts.strobe ? 120 : 150);
     const v = Math.min(1, 0.1 + 0.9 * f.energy + flash * 0.4);
     return frame(this.layout, (p) => {
-      const hue = this.palette.base + this.angle + p.nx * (this.opts.spread ?? 120);
       const sat = this.opts.strobe && flash > 0.5 ? 0.15 : 1 - flash * 0.5;
+      // rainbow variant + a swatch set → rotating bands of the cover's own colors
+      if (this.swatches && this.opts.spread === 360) {
+        const t = ((p.nx + this.angle / 360) % 1 + 1) % 1;
+        const hue = this.swatches[Math.floor(t * this.swatches.length) % this.swatches.length];
+        return hsv(hue, sat, v);
+      }
+      const hue = this.palette.base + this.angle + p.nx * (this.opts.spread ?? 120);
       return hsv(hue, sat, v);
     });
   }
@@ -246,28 +267,28 @@ class SparkleEngine extends BaseEngine {
   }
   render(f, dtMs) {
     const decay = dtMs / (this.opts.burst ? 350 : 250);
-    for (const [id, v] of this.glow) {
-      const nv = v - decay;
-      if (nv <= 0) this.glow.delete(id);
-      else this.glow.set(id, nv);
+    for (const [id, s] of this.glow) {
+      s.v -= decay;
+      if (s.v <= 0) this.glow.delete(id);
     }
+    // Each glint takes a random swatch (so the glitter spans the cover's colors);
+    // without a swatch set it's the single hit hue, exactly as before.
+    const ignite = (id) => this.glow.set(id, { v: 1, hue: this.swatches ? this.randSwatch() : this.palette.hit });
     if (this.opts.burst) {
       if (f.onset) {
         const count = Math.max(1, Math.round(this.layout.length * 0.4));
-        for (let i = 0; i < count; i++) {
-          this.glow.set(this.layout[Math.floor(this.rng() * this.layout.length)].id, 1);
-        }
+        for (let i = 0; i < count; i++) ignite(this.layout[Math.floor(this.rng() * this.layout.length)].id);
       }
     } else {
       // per-tick ignition probability rides the treble
       for (const p of this.layout) {
-        if (this.rng() < f.treble * 0.25) this.glow.set(p.id, 1);
+        if (this.rng() < f.treble * 0.25) ignite(p.id);
       }
     }
     const bg = dim(hsv(this.palette.base, 1, 1), 0.1 + f.bass * 0.4);
     return frame(this.layout, (p) => {
-      const g = this.glow.get(p.id) || 0;
-      return g > 0.02 ? mix(bg, hsv(this.palette.hit, 0.5, 1), g) : bg;
+      const s = this.glow.get(p.id);
+      return s && s.v > 0.02 ? mix(bg, hsv(s.hue, 0.5, 1), s.v) : bg;
     });
   }
 }
@@ -401,7 +422,7 @@ class SectionsEngine extends BaseEngine {
       this.sections.push({
         from,
         to: from + span,
-        hue: this.hueFlip ? this.palette.accent : this.palette.hit,
+        hue: this.swatches ? this.nextSwatch() : (this.hueFlip ? this.palette.accent : this.palette.hit),
         life: 1,
       });
       if (this.sections.length > 3) this.sections.shift();

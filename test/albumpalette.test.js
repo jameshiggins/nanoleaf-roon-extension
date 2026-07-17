@@ -59,7 +59,28 @@ test('monochrome (single hue) cover still fans out to 3 distinct hues', () => {
   ]).size, 3, 'three distinct hues so scenes keep contrast');
 });
 
-test('grayscale cover → null (caller falls back to Retro)', () => {
+test('extracts up to 6 distinct swatches from a rich, multi-color cover', () => {
+  const bands = [[220, 20, 20], [20, 200, 40], [30, 110, 240], [240, 220, 20], [200, 20, 200], [20, 220, 220]];
+  const buf = image(24, 24, (x) => bands[Math.min(5, Math.floor(x / 4))]);
+  const pal = extractPalette(buf, 24, 24);
+  assert.ok(pal.swatches.length >= 5 && pal.swatches.length <= 6, `~6 swatches, got ${pal.swatches.length}`);
+  for (let i = 0; i < pal.swatches.length; i++) {
+    for (let j = i + 1; j < pal.swatches.length; j++) {
+      assert.ok(hueDist(pal.swatches[i], pal.swatches[j]) >= 20, `swatches ${i},${j} distinct`);
+    }
+  }
+  assert.equal(pal.base, pal.swatches[0]);
+  assert.equal(pal.accent, pal.swatches[1]);
+  assert.equal(pal.hit, pal.swatches[2]);
+});
+
+test('monochrome cover still yields 3 swatches (fanned) for the 3-color roles', () => {
+  const pal = extractPalette(image(16, 16, () => [200, 160, 40]), 16, 16);
+  assert.equal(pal.swatches.length, 3);
+  assert.equal(new Set(pal.swatches.map(Math.round)).size, 3, 'three distinct hues');
+});
+
+test('grayscale cover → null (caller falls back to Vintage Modern)', () => {
   assert.equal(extractPalette(image(16, 16, () => [90, 90, 90]), 16, 16), null);
   assert.equal(extractPalette(image(16, 16, () => [0, 0, 0]), 16, 16), null); // all black
 });
