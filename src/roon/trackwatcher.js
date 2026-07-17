@@ -3,7 +3,7 @@
 /**
  * Turns raw Roon zone-subscription events into clean semantic events:
  *
- *   'track' ({ zoneName, title, artist, album, key })  — a new track started playing
+ *   'track' ({ zoneName, title, artist, album, imageKey, key })  — a new track started playing
  *   'playing'                                          — a watched zone began playing
  *   'idle'                                             — no watched zone is playing anymore
  *   'zones' ({ matched, all })                         — zone names seen in a snapshot
@@ -108,6 +108,7 @@ class TrackWatcher extends EventEmitter {
             title: t.line1 || '',
             artist: t.line2 || '',
             album: t.line3 || '',
+            imageKey: (zone.now_playing && zone.now_playing.image_key) || null,
             key,
           });
         }

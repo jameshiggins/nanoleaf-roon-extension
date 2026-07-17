@@ -10,7 +10,11 @@ function zone(id, name, state, track) {
     display_name: name,
     state,
     now_playing: track
-      ? { three_line: { line1: track.title, line2: track.artist, line3: track.album }, length: track.length ?? 200 }
+      ? {
+          three_line: { line1: track.title, line2: track.artist, line3: track.album },
+          length: track.length ?? 200,
+          ...(track.imageKey ? { image_key: track.imageKey } : {}),
+        }
       : undefined,
   };
 }
@@ -45,7 +49,16 @@ test('new track while playing emits exactly once', () => {
   w.handleEvent('Changed', { zones_changed: [next] });
   w.handleEvent('Changed', { zones_changed: [next] }); // duplicate delivery (e.g. volume move)
   assert.equal(ev.track.length, 1);
-  assert.deepEqual(ev.track[0], { zoneName: 'Study', title: 'D', artist: 'B', album: 'C', key: 'D|B|C|200' });
+  assert.deepEqual(ev.track[0], { zoneName: 'Study', title: 'D', artist: 'B', album: 'C', imageKey: null, key: 'D|B|C|200' });
+});
+
+test('track event carries the album image_key when present', () => {
+  const w = new TrackWatcher();
+  const ev = collect(w);
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C' })] });
+  w.handleEvent('Changed', { zones_changed: [zone('z1', 'Study', 'playing', { title: 'D', artist: 'B', album: 'C', imageKey: 'abc123' })] });
+  assert.equal(ev.track.length, 1);
+  assert.equal(ev.track[0].imageKey, 'abc123');
 });
 
 test('pause and resume of the same track never emit', () => {

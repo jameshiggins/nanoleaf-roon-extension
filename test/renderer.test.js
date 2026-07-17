@@ -178,6 +178,32 @@ test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () 
   assert.ok(isWarm(muted), 'retro frame reads warm (mean R > mean B)');
 });
 
+test('setLivePalette overrides the pin, rebuilds the visual, persists across rotations; clear reverts', () => {
+  const seq = (() => { let s = 0.2; return () => (s = (s * 7919 + 0.577) % 1); })();
+  const { renderer } = make({ palette: 'Retro', include: ['pulse', 'wheel', 'ripple'] }, { rng: seq });
+  renderer.rotate(true);
+  assert.equal(renderer.currentPalette.name, 'Retro', 'starts on the pin');
+
+  const album = { name: 'Album', base: 200, accent: 40, hit: 300, sat: 0.9, val: 1 };
+  renderer.setLivePalette(album);
+  assert.equal(renderer.currentPalette.name, 'Album', 'live palette overrides the pin');
+  assert.equal(renderer.currentPalette.base, 200, 'visual rebuilt with the album hues (not just re-toned)');
+
+  for (let i = 0; i < 6; i++) { renderer.rotate(false); assert.equal(renderer.currentPalette.name, 'Album', 'live palette survives scene rotation'); }
+
+  renderer.clearLivePalette();
+  assert.equal(renderer.currentPalette.name, 'Retro', 'clearing reverts to the pin');
+});
+
+test('clearLivePalette with no pin falls back to a generated palette, not dark', () => {
+  const { renderer } = make({ include: ['wheel'] });
+  renderer.rotate(true);
+  renderer.setLivePalette({ name: 'Album', base: 10, accent: 120, hit: 250 });
+  assert.equal(renderer.currentPalette.name, 'Album');
+  renderer.clearLivePalette();
+  assert.ok(renderer.currentPalette && renderer.currentPalette.name !== 'Album', 'reverted to a real palette');
+});
+
 // --- control surface ---
 
 test('getState / getCatalogue expose current look and choices', () => {

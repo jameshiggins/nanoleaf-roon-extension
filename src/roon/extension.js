@@ -34,25 +34,29 @@ function saveState(state) {
 
 class RoonExtension {
   /**
-   * @param {{ onZoneEvent?: (response: string, msg: object|undefined) => void }} [opts]
+   * @param {{ onZoneEvent?: (response: string, msg: object|undefined) => void,
+   *           wantImages?: boolean }} [opts]
    *   onZoneEvent: raw subscribe_zones callback (e.g. TrackWatcher#handleEvent).
    *   Providing it makes RoonApiTransport a required service and (re)subscribes
    *   on every pairing — core_paired delivers a fresh Core after each reconnect,
    *   so the subscription must be renewed there.
+   *   wantImages: request the image service so getImage() can fetch album art.
    */
   constructor(opts = {}) {
     this.onZoneEvent = opts.onZoneEvent ?? null;
+    this.wantImages = opts.wantImages ?? false;
     this.roon = null;
     this.status = null;
     this.core = null;
   }
 
   start() {
-    let RoonApi, RoonApiStatus, RoonApiTransport;
+    let RoonApi, RoonApiStatus, RoonApiTransport, RoonApiImage;
     try {
       RoonApi = require('node-roon-api');
       RoonApiStatus = require('node-roon-api-status');
       if (this.onZoneEvent) RoonApiTransport = require('node-roon-api-transport');
+      if (this.wantImages) RoonApiImage = require('node-roon-api-image');
     } catch (err) {
       throw new Error(
         'node-roon-api is not installed — run `npm install`, or set roon.enabled=false ' +
@@ -89,9 +93,12 @@ class RoonExtension {
     });
 
     this.status = new RoonApiStatus(this.roon);
+    const required = [];
+    if (this.onZoneEvent) required.push(RoonApiTransport);
+    if (this.wantImages) required.push(RoonApiImage);
     this.roon.init_services({
       provided_services: [this.status],
-      ...(this.onZoneEvent ? { required_services: [RoonApiTransport] } : {}),
+      ...(required.length ? { required_services: required } : {}),
     });
     this.setStatus('Starting…');
     this.roon.start_discovery();
@@ -101,6 +108,27 @@ class RoonExtension {
   /** Show a status line in Roon's extension list. No-op when Roon is disabled. */
   setStatus(message, isError = false) {
     if (this.status) this.status.set_status(message, isError);
+  }
+
+  /**
+   * Fetch album art by image_key, scaled server-side to a small thumbnail.
+   * @param {string} imageKey
+   * @param {{ width?: number, height?: number }} [opts]
+   * @returns {Promise<{ contentType: string, body: Buffer }>}
+   */
+  getImage(imageKey, { width = 64, height = 64 } = {}) {
+    return new Promise((resolve, reject) => {
+      const svc = this.core && this.core.services && this.core.services.RoonApiImage;
+      if (!svc) return reject(new Error('Roon image service unavailable (not paired?)'));
+      svc.get_image(
+        imageKey,
+        { scale: 'fit', width, height, format: 'image/jpeg' },
+        (err, contentType, body) => {
+          if (err) return reject(new Error(`get_image failed: ${err}`));
+          resolve({ contentType, body });
+        }
+      );
+    });
   }
 }
 

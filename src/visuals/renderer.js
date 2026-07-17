@@ -87,6 +87,10 @@ class VisualRenderer extends EventEmitter {
       if (!this.pinnedPalette) throw new Error(`unknown palette pin: ${this.config.palette}`);
     }
 
+    // Externally-supplied palette (e.g. derived from album art), overriding the
+    // pin/rotation until cleared. Set via setLivePalette() as fetches resolve.
+    this.livePalette = null;
+
     this.visual = null;
     this.currentName = null;
     this.currentPalette = null;
@@ -142,7 +146,7 @@ class VisualRenderer extends EventEmitter {
   /** Swap in a new visualizer + palette from the shuffle bags. */
   rotate(initial) {
     const name = this.visualBag.next();
-    const palette = this.pinnedPalette || this.palettes[this.paletteBag.next()];
+    const palette = this.livePalette || this.pinnedPalette || this.palettes[this.paletteBag.next()];
     this._apply(name, palette, initial ? 'starting with' : 'switching to');
   }
 
@@ -241,6 +245,27 @@ class VisualRenderer extends EventEmitter {
     if (!palette) return null;
     this._apply(this.currentName || this.visualBag.next(), palette, 'recoloring');
     return palette.name;
+  }
+
+  /**
+   * Apply an externally-derived palette (e.g. extracted from album art) and keep
+   * it across scene rotations until cleared. Rebuilds the current visual so its
+   * hues actually change (the tone pass alone can't inject new hues).
+   * @returns {string|null} the palette name, or null if none was given
+   */
+  setLivePalette(palette) {
+    if (!palette) return null;
+    this.livePalette = palette;
+    this._apply(this.currentName || this.visualBag.next(), palette, 'album colors');
+    return palette.name;
+  }
+
+  /** Drop the live palette and recolor to the pinned (or next rotation) palette. */
+  clearLivePalette() {
+    if (!this.livePalette) return;
+    this.livePalette = null;
+    const palette = this.pinnedPalette || this.palettes[this.paletteBag.next()];
+    this._apply(this.currentName || this.visualBag.next(), palette, 'album colors off');
   }
 
   setGain(gain) {

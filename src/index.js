@@ -96,10 +96,32 @@ async function runService(configFile) {
     const { RoonExtension } = require('./roon/extension');
     const { TrackWatcher } = require('./roon/trackwatcher');
     const watcher = new TrackWatcher({ zone: cfg.roon.zone });
+    // Album colors: the palette follows the cover art. A fetch is async while
+    // track changes are synchronous, so tag each fetch with the track key and
+    // only apply it if that track is still current — a rapid skip can't let a
+    // stale cover clobber the new one. Any failure falls back to the pinned
+    // palette (never dark), matching the "Roon outage never darkens" ethos.
+    let currentTrackKey = null;
+    const albumColors = cfg.visuals.albumColors
+      ? require('./visuals/albumcolors').fetchAlbumPalette
+      : null;
     watcher.on('track', (track) => {
       if (!renderer) return;
       renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
       renderer.onTrackChange();
+      currentTrackKey = track.key;
+      if (!albumColors) return;
+      if (!track.imageKey) { renderer.clearLivePalette(); return; } // no art → pinned palette
+      albumColors(roon, track.imageKey, cfg.visuals)
+        .then((palette) => {
+          if (track.key !== currentTrackKey) return; // a newer track won the race
+          if (palette) renderer.setLivePalette(palette);
+          else renderer.clearLivePalette(); // grayscale cover → pinned palette
+        })
+        .catch((err) => {
+          if (track.key === currentTrackKey) renderer.clearLivePalette();
+          log.debug(`album colors unavailable: ${err.message}`);
+        });
     });
     watcher.on('idle', () => renderer && renderer.setNowPlaying(null));
     watcher.on('zones', ({ matched, all }) => {
@@ -107,7 +129,10 @@ async function runService(configFile) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
       }
     });
-    roon = new RoonExtension({ onZoneEvent: (response, msg) => watcher.handleEvent(response, msg) });
+    roon = new RoonExtension({
+      onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
+      wantImages: cfg.visuals.albumColors,
+    });
     roon.start();
   }
   const setStatus = (msg, isErr) => {

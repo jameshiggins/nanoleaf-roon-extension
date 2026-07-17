@@ -107,6 +107,21 @@ test('fromObject: visuals.palette pins a known palette, rejects unknown', () => 
   assert.throws(() => config.fromObject({ visuals: { palette: 'Mauve Sparkle' } }), /visuals\.palette: unknown palette/);
 });
 
+test('fromObject: albumColors requires roon and validates sat/val', () => {
+  assert.equal(config.fromObject({}).visuals.albumColors, false);
+  assert.throws(() => config.fromObject({ visuals: { albumColors: 'yes' } }), /albumColors: expected true or false/);
+  assert.throws(
+    () => config.fromObject({ roon: { enabled: false }, visuals: { albumColors: true, rotate: 'off' } }),
+    /albumColors requires roon\.enabled/
+  );
+  assert.throws(() => config.fromObject({ visuals: { albumSat: 2 } }), /visuals\.albumSat/);
+  assert.throws(() => config.fromObject({ visuals: { albumVal: -1 } }), /visuals\.albumVal/);
+  const ok = config.fromObject({ visuals: { albumColors: true, albumSat: 0.5, albumVal: 0.8 } });
+  assert.equal(ok.visuals.albumColors, true);
+  assert.equal(ok.visuals.albumSat, 0.5);
+  assert.equal(ok.visuals.albumVal, 0.8);
+});
+
 test('fromObject: legacy scenes/mode keys are now rejected', () => {
   assert.throws(() => config.fromObject({ mode: 'scenes' }), /mode: unknown setting/);
   assert.throws(() => config.fromObject({ scenes: {} }), /scenes: unknown setting/);

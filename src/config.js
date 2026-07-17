@@ -30,6 +30,9 @@ const DEFAULTS = {
     exclude: [],         // visualizers to skip
     palettes: 36,        // how many color palettes to generate (>= 1)
     palette: '',         // pin one palette by name (e.g. "Retro"); '' = rotate colors too
+    albumColors: false,  // derive the palette from Roon album art each track (falls back to `palette`)
+    albumSat: 0.9,       // tone-pass saturation for album colors (1 = fully vivid)
+    albumVal: 1.0,       // tone-pass brightness for album colors
     rotate: 'track',     // 'track' | 'off' | <seconds>  — when to switch the look
     minSeconds: 8,       // don't rotate more often than this on rapid track skipping
     gain: 1.0,           // linear gain applied to the audio level before mapping
@@ -127,6 +130,12 @@ function validate(cfg, errors) {
     errors.push(`visuals.rotate: expected "track", "off", or a positive number of seconds, got ${JSON.stringify(rot)}`);
   }
   num(cfg.visuals.minSeconds, 'visuals.minSeconds', 0, 3600);
+  if (typeof cfg.visuals.albumColors !== 'boolean') errors.push('visuals.albumColors: expected true or false');
+  if (cfg.visuals.albumColors === true && cfg.roon.enabled !== true) {
+    errors.push('visuals.albumColors requires roon.enabled: true (album art comes from Roon)');
+  }
+  num(cfg.visuals.albumSat, 'visuals.albumSat', 0, 1);
+  num(cfg.visuals.albumVal, 'visuals.albumVal', 0, 1);
   num(cfg.visuals.gain, 'visuals.gain', 0, 100);
   num(cfg.visuals.attackMs, 'visuals.attackMs', 0, 5000);
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);
