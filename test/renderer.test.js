@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { VisualRenderer } = require('../src/visuals/renderer');
+const { resolvePalette } = require('../src/visuals/palettes');
 
 const LAYOUT = [
   { id: 1, nx: 0, ny: 0 },
@@ -121,6 +122,60 @@ test('start wires the source and stop blacks out', () => {
 
 test('empty include/exclude intersection throws at construction', () => {
   assert.throws(() => make({ include: ['does-not-exist'] }).renderer, /no visualizers left/);
+});
+
+// --- palette pin + vintage tone pass ---
+
+test('visuals.palette pins the palette while scenes still rotate', () => {
+  const seq = (() => { let s = 0.11; return () => (s = (s * 9301 + 0.4931) % 1); })();
+  const { renderer } = make({ palette: 'Retro', include: ['wheel', 'ripple', 'sparkle', 'fire'] }, { rng: seq });
+  const visuals = new Set();
+  for (let i = 0; i < 16; i++) {
+    renderer.rotate(false);
+    assert.equal(renderer.currentPalette.name, 'Retro', 'palette stays pinned across rotations');
+    visuals.add(renderer.currentName);
+  }
+  assert.ok(visuals.size > 1, `scenes should still rotate, saw ${visuals.size}`);
+  assert.ok(renderer.currentPalette.sat < 1, 'pinned palette keeps its muting sat');
+});
+
+test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () => {
+  // The wall can't be observed from a headless run, so verify the color math:
+  // the same scene + hues, rendered with Retro's sat/val vs a full-saturation
+  // palette, must come out measurably less saturated (and warm).
+  const { renderer } = make({ include: ['pulse'] });
+  renderer.rotate(true); // establish a scene so renderFrame has a visual
+  for (let i = 0; i < 12; i++) { renderer.features.onChunk(loudChunk()); renderer.renderFrame(); } // raise gate
+
+  const plainPal = { name: 'Plain', base: 45, accent: 82, hit: 15 }; // Retro hues, full saturation
+  const retroPal = resolvePalette('Retro');                          // same hues, sat .72 / val .9
+
+  renderer.features.onChunk(loudChunk());
+  renderer._apply('pulse', plainPal, 'test');
+  const plain = renderer.renderFrame();
+  renderer.features.onChunk(loudChunk());
+  renderer._apply('pulse', retroPal, 'test');
+  const muted = renderer.renderFrame();
+
+  const meanSat = (fr) => {
+    const lit = fr.filter((p) => Math.max(p.r, p.g, p.b) > 8);
+    assert.ok(lit.length, 'some panels are lit');
+    const s = lit.map((p) => {
+      const mx = Math.max(p.r, p.g, p.b), mn = Math.min(p.r, p.g, p.b);
+      return mx > 0 ? (mx - mn) / mx : 0;
+    });
+    return s.reduce((a, b) => a + b, 0) / s.length;
+  };
+  const isWarm = (fr) => {
+    const mean = (k) => fr.reduce((a, p) => a + p[k], 0) / fr.length;
+    return mean('r') > mean('b');
+  };
+
+  assert.ok(
+    meanSat(muted) < meanSat(plain) - 0.05,
+    `muted (${meanSat(muted).toFixed(3)}) should be less saturated than plain (${meanSat(plain).toFixed(3)})`
+  );
+  assert.ok(isWarm(muted), 'retro frame reads warm (mean R > mean B)');
 });
 
 // --- control surface ---

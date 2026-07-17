@@ -92,4 +92,37 @@ function generatePalettes(count = 36) {
 
 const PALETTES = generatePalettes(36);
 
-module.exports = { hsv, mix, dim, generatePalettes, PALETTES };
+/**
+ * Hand-picked palettes that live outside the procedural set. Unlike the
+ * generated palettes — pure hues rendered at full saturation — these may carry
+ * `sat` and `val` (0..1) to mute the whole look. The renderer applies them as a
+ * post-render tone pass, so one muted palette fades every visualizer at once.
+ *
+ * `Retro` is a '70s harvest wash: mustard-gold background, avocado motion,
+ * burnt-orange beat hits — desaturated and slightly dimmed so it reads vintage
+ * (earthy khaki/olive) rather than neon. Modeled on the Nanoleaf community
+ * scene "Vintage Modern".
+ */
+const CURATED = [
+  { name: 'Retro', base: 45, accent: 82, hit: 15, sat: 0.72, val: 0.9 },
+];
+
+/**
+ * Resolve a palette by name (case-insensitive), curated set first, then a
+ * generated set of `count` palettes. `count` matters because the generated
+ * names depend on how many were asked for; curated palettes are always found.
+ * @returns {object|null} the palette, or null if the name is unknown
+ */
+function resolvePalette(name, count = 36) {
+  const key = String(name).toLowerCase();
+  const curated = CURATED.find((p) => p.name.toLowerCase() === key);
+  if (curated) return curated;
+  return generatePalettes(count).find((p) => p.name.toLowerCase() === key) || null;
+}
+
+/** Every pinnable palette name at a given generated `count`, curated first. */
+function paletteNames(count = 36) {
+  return [...CURATED.map((p) => p.name), ...generatePalettes(count).map((p) => p.name)];
+}
+
+module.exports = { hsv, mix, dim, generatePalettes, PALETTES, CURATED, resolvePalette, paletteNames };

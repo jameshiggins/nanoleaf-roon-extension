@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hsv, mix, dim, generatePalettes, PALETTES } = require('../src/visuals/palettes');
+const { hsv, mix, dim, generatePalettes, PALETTES, resolvePalette, paletteNames } = require('../src/visuals/palettes');
 
 test('hsv: primary colors', () => {
   const red = hsv(0, 1, 1);
@@ -55,4 +55,43 @@ test('consecutive palettes differ in base hue (golden-angle spread)', () => {
     const wrapped = Math.min(d, 360 - d);
     assert.ok(wrapped > 20, `palettes ${i - 1}/${i} too close: ${wrapped}`);
   }
+});
+
+// --- curated palettes + pin resolution ---
+
+test('resolvePalette finds the curated Retro palette (case-insensitive)', () => {
+  assert.equal(resolvePalette('Retro').name, 'Retro');
+  assert.equal(resolvePalette('retro').name, 'Retro');
+  assert.equal(resolvePalette('RETRO').name, 'Retro');
+});
+
+test('Retro carries muting sat/val and warm harvest hues', () => {
+  const retro = resolvePalette('Retro');
+  assert.ok(retro.sat < 1, `sat should be < 1, got ${retro.sat}`);
+  assert.ok(retro.val > 0 && retro.val <= 1, `val in (0,1], got ${retro.val}`);
+  assert.ok(retro.base >= 30 && retro.base <= 60, `base is a gold hue, got ${retro.base}`);
+});
+
+test('generated palettes carry no sat/val (unchanged full-saturation behavior)', () => {
+  for (const p of generatePalettes(36)) {
+    assert.equal(p.sat, undefined, `${p.name} must not define sat`);
+    assert.equal(p.val, undefined, `${p.name} must not define val`);
+  }
+});
+
+test('resolvePalette: generated names resolve; Retro resolves at any count', () => {
+  assert.ok(resolvePalette('Citrus Pop', 36), 'generated name resolves at count 36');
+  assert.ok(resolvePalette('Retro', 1), 'curated Retro resolves even at count 1');
+});
+
+test('resolvePalette returns null for unknown names', () => {
+  assert.equal(resolvePalette('Nonexistent Sparkle'), null);
+  assert.equal(resolvePalette(''), null);
+});
+
+test('paletteNames lists curated first, no duplicates', () => {
+  const names = paletteNames(36);
+  assert.equal(names[0], 'Retro', 'curated Retro leads the list');
+  assert.ok(names.includes('Citrus Pop'), 'generated names included');
+  assert.equal(new Set(names).size, names.length, 'no duplicate names');
 });

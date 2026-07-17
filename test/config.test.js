@@ -99,6 +99,14 @@ test('fromObject: visuals settings are validated', () => {
   assert.equal(cfg.visuals.gain, 2);
 });
 
+test('fromObject: visuals.palette pins a known palette, rejects unknown', () => {
+  assert.equal(config.fromObject({}).visuals.palette, '');           // default: no pin
+  assert.equal(config.fromObject({ visuals: { palette: 'Retro' } }).visuals.palette, 'Retro');
+  assert.equal(config.fromObject({ visuals: { palette: 'retro' } }).visuals.palette, 'retro'); // case-insensitive resolve
+  assert.equal(config.fromObject({ visuals: { palette: 'Citrus Pop' } }).visuals.palette, 'Citrus Pop');
+  assert.throws(() => config.fromObject({ visuals: { palette: 'Mauve Sparkle' } }), /visuals\.palette: unknown palette/);
+});
+
 test('fromObject: legacy scenes/mode keys are now rejected', () => {
   assert.throws(() => config.fromObject({ mode: 'scenes' }), /mode: unknown setting/);
   assert.throws(() => config.fromObject({ scenes: {} }), /scenes: unknown setting/);

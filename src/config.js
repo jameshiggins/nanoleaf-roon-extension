@@ -29,6 +29,7 @@ const DEFAULTS = {
     include: [],         // limit to these visualizer names; empty = all
     exclude: [],         // visualizers to skip
     palettes: 36,        // how many color palettes to generate (>= 1)
+    palette: '',         // pin one palette by name (e.g. "Retro"); '' = rotate colors too
     rotate: 'track',     // 'track' | 'off' | <seconds>  — when to switch the look
     minSeconds: 8,       // don't rotate more often than this on rapid track skipping
     gain: 1.0,           // linear gain applied to the audio level before mapping
@@ -111,6 +112,16 @@ function validate(cfg, errors) {
   strArray(cfg.visuals.include, 'visuals.include');
   strArray(cfg.visuals.exclude, 'visuals.exclude');
   num(cfg.visuals.palettes, 'visuals.palettes', 1, 1000);
+  str(cfg.visuals.palette, 'visuals.palette');
+  if (typeof cfg.visuals.palette === 'string' && cfg.visuals.palette !== '') {
+    const { resolvePalette, paletteNames } = require('./visuals/palettes');
+    if (!resolvePalette(cfg.visuals.palette, cfg.visuals.palettes)) {
+      errors.push(
+        `visuals.palette: unknown palette ${JSON.stringify(cfg.visuals.palette)}; ` +
+        `available: ${paletteNames(cfg.visuals.palettes).join(', ')}`
+      );
+    }
+  }
   const rot = cfg.visuals.rotate;
   if (rot !== 'track' && rot !== 'off' && !(typeof rot === 'number' && rot > 0 && Number.isFinite(rot))) {
     errors.push(`visuals.rotate: expected "track", "off", or a positive number of seconds, got ${JSON.stringify(rot)}`);

@@ -21,10 +21,25 @@
 
 const { EventEmitter } = require('node:events');
 const { FeatureExtractor } = require('../dsp/features');
-const { generatePalettes } = require('./palettes');
+const { generatePalettes, resolvePalette } = require('./palettes');
 const { visualNames, describeVisuals, createVisual } = require('./visualizers');
 const { ShuffleBag, filterNames } = require('./shuffle');
 const log = require('../log')('visuals');
+
+/**
+ * Mute a frame toward vintage tones: pull each pixel toward its own luma
+ * (desaturate) and scale brightness. Applied per-frame when the active palette
+ * carries `sat`/`val` < 1. Commutes with the silence gate's uniform scaling, so
+ * ordering between the two doesn't matter.
+ */
+function toneMap(frame, sat, val) {
+  for (const p of frame) {
+    const luma = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+    p.r = (luma + (p.r - luma) * sat) * val;
+    p.g = (luma + (p.g - luma) * sat) * val;
+    p.b = (luma + (p.b - luma) * sat) * val;
+  }
+}
 
 class VisualRenderer extends EventEmitter {
   /**
@@ -63,6 +78,14 @@ class VisualRenderer extends EventEmitter {
     this.visualBag = new ShuffleBag(this.poolNames, { rng: this.rng });
     this.palettes = generatePalettes(this.config.palettes);
     this.paletteBag = new ShuffleBag(this.palettes.map((_, i) => i), { rng: this.rng });
+
+    // Optional palette pin: freeze the colors on one palette while scenes still
+    // rotate. Config validation already checked the name resolves.
+    this.pinnedPalette = null;
+    if (this.config.palette) {
+      this.pinnedPalette = resolvePalette(this.config.palette, this.config.palettes);
+      if (!this.pinnedPalette) throw new Error(`unknown palette pin: ${this.config.palette}`);
+    }
 
     this.visual = null;
     this.currentName = null;
@@ -119,7 +142,7 @@ class VisualRenderer extends EventEmitter {
   /** Swap in a new visualizer + palette from the shuffle bags. */
   rotate(initial) {
     const name = this.visualBag.next();
-    const palette = this.palettes[this.paletteBag.next()];
+    const palette = this.pinnedPalette || this.palettes[this.paletteBag.next()];
     this._apply(name, palette, initial ? 'starting with' : 'switching to');
   }
 
@@ -145,6 +168,12 @@ class VisualRenderer extends EventEmitter {
     if (this.gate < 0.01) this.gate = target === 0 ? 0 : this.gate;
 
     const frame = this.visual.render(f, 1000 / this.fps);
+    // Vintage tone pass: only when the active palette opts in via sat/val < 1.
+    // Absent (generated palettes) → treated as 1, so their output is unchanged.
+    const pal = this.currentPalette;
+    const sat = pal && pal.sat != null ? pal.sat : 1;
+    const val = pal && pal.val != null ? pal.val : 1;
+    if (sat < 1 || val < 1) toneMap(frame, sat, val);
     if (this.gate < 0.999) {
       for (const p of frame) {
         p.r *= this.gate;
