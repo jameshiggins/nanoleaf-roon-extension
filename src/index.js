@@ -95,7 +95,19 @@ async function runService(configFile) {
   if (cfg.roon.enabled) {
     const { RoonExtension } = require('./roon/extension');
     const { TrackWatcher } = require('./roon/trackwatcher');
+    const { SleepTimer } = require('./roon/sleeptimer');
     const watcher = new TrackWatcher({ zone: cfg.roon.zone });
+
+    // Sleep timer: stop playback at the end of the current track. Armed from the
+    // dropdown in Roon → Settings → Extensions; the timer follows the playing
+    // zone's seek ticks and stops it a hair before the track's natural end.
+    const sleep = new SleepTimer({ stop: (zoneId) => roon.stopZone(zoneId) });
+    let lastPlayingZoneId = null; // most-recently-playing matched zone, bound on arm
+    sleep.on('fired', () => {
+      roon.setSleepMode('off'); // one-shot: reset the dropdown in Roon's UI
+      setStatus('Sleep: stopped playback at the end of the track.');
+    });
+
     // Album colors: the palette follows the cover art. A fetch is async while
     // track changes are synchronous, so tag each fetch with the track key and
     // only apply it if that track is still current — a rapid skip can't let a
@@ -106,6 +118,7 @@ async function runService(configFile) {
       ? require('./visuals/albumcolors').fetchAlbumPalette
       : null;
     watcher.on('track', (track) => {
+      lastPlayingZoneId = track.zoneId;
       if (!renderer) return;
       renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
       renderer.onTrackChange();
@@ -123,7 +136,15 @@ async function runService(configFile) {
           log.debug(`album colors unavailable: ${err.message}`);
         });
     });
-    watcher.on('idle', () => renderer && renderer.setNowPlaying(null));
+    watcher.on('idle', () => {
+      if (renderer) renderer.setNowPlaying(null);
+      lastPlayingZoneId = null; // nothing playing → a later arm binds to the next zone that plays
+      sleep.onIdle(); // paused/stopped → cancel any pending stop (never fire onto a paused track)
+    });
+    watcher.on('seek', (s) => {
+      if (s.state === 'playing') lastPlayingZoneId = s.zoneId;
+      sleep.onSeek(s);
+    });
     watcher.on('zones', ({ matched, all }) => {
       if (cfg.roon.zone && matched.length === 0) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
@@ -132,6 +153,17 @@ async function runService(configFile) {
     roon = new RoonExtension({
       onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
       wantImages: cfg.visuals.albumColors,
+      onSleepMode: (value) => {
+        if (value === 'end-of-track') {
+          sleep.arm({ zoneId: lastPlayingZoneId });
+          setStatus(lastPlayingZoneId
+            ? 'Sleep armed — playback will stop at the end of the current track.'
+            : 'Sleep armed — playback will stop at the end of the next track you play.');
+        } else {
+          sleep.disarm('user');
+          setStatus('Sleep timer off.');
+        }
+      },
     });
     roon.start();
   }

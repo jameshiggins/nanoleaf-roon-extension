@@ -71,6 +71,22 @@ Then in Roon, **Settings → Extensions** → enable *Nanoleaf Roon Extension*, 
 5. **Rotate** — Roon track changes (via the transport API) trigger a switch to a new
    visualizer + palette.
 
+## Sleep timer — stop at the end of the current track
+
+In Roon, open **Settings → Extensions → Nanoleaf Roon Extension → (gear) → Settings** and set
+**Stop playback** to *At end of current track*, then **Save**. The extension follows the playing
+zone's playhead and stops it a hair before the track's natural end — so the current song finishes
+and nothing else starts.
+
+It's a one-shot: after it fires, the dropdown resets to *Off*. Arm it while nothing is playing and
+it stops at the end of the next track you play; pausing or skipping just re-targets the end of
+whatever is playing when the timer lands. (This uses Roon's own transport control, so it works for
+any Roon zone — RAAT endpoint, Squeezebox, or grouped.)
+
+It's built for a single listening zone at a time — set a `roon.zone` filter if you have several
+Roon zones so the timer targets the right one; with no filter it binds to whichever matching zone
+is playing when you arm it.
+
 ## Running it permanently
 
 - **Headless / next to the Core** — [docs/DEPLOY-HEADLESS.md](docs/DEPLOY-HEADLESS.md)

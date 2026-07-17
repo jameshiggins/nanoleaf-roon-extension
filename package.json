@@ -24,6 +24,7 @@
     "jpeg-js": "^0.4.4",
     "node-roon-api": "github:RoonLabs/node-roon-api",
     "node-roon-api-image": "github:RoonLabs/node-roon-api-image",
+    "node-roon-api-settings": "github:RoonLabs/node-roon-api-settings",
     "node-roon-api-status": "github:RoonLabs/node-roon-api-status",
     "node-roon-api-transport": "github:RoonLabs/node-roon-api-transport"
   },

@@ -3,7 +3,8 @@
 /**
  * Turns raw Roon zone-subscription events into clean semantic events:
  *
- *   'track' ({ zoneName, title, artist, album, imageKey, key })  — a new track started playing
+ *   'track' ({ zoneId, zoneName, title, artist, album, imageKey, key })  — a new track started
+ *   'seek'  ({ zoneId, zoneName, seekPosition, length, state })  — a playhead tick while playing
  *   'playing'                                          — a watched zone began playing
  *   'idle'                                             — no watched zone is playing anymore
  *   'zones' ({ matched, all })                         — zone names seen in a snapshot
@@ -13,7 +14,12 @@
  * node-roon-api-transport source):
  *
  * - now_playing has no track id; identity is derived from three_line + length.
- * - Seek ticks arrive only in zones_seek_changed, which we never look at.
+ * - Seek ticks arrive only in zones_seek_changed (~1/s while playing) and carry
+ *   just { zone_id, seek_position }; the track length lives on now_playing, so
+ *   we cache per-zone {name,length,state} from the zone snapshots and enrich the
+ *   'seek' event with it. Track-change rotation never needed these ticks (hence
+ *   the original design ignored them), but the sleep timer needs precise
+ *   end-of-track timing, so they are surfaced as a 'seek' event now.
  * - Pauses, volume moves and queue edits arrive as zones_changed with an
  *   unchanged track key, so the key comparison filters them.
  * - The last-emitted key updates only on emit: skipping tracks while paused and
@@ -43,6 +49,16 @@ class TrackWatcher extends EventEmitter {
     this.zoneFilter = (opts.zone || '').toLowerCase();
     this.lastKey = new Map();      // zone_id → last emitted (or seeded) track key
     this.playingZones = new Set(); // watched zone_ids currently in state 'playing'
+    this.zoneInfo = new Map();     // zone_id → { name, length, state } for enriching seek ticks
+  }
+
+  /** Cache the fields a bare seek tick lacks (name, track length, state). */
+  _recordZone(zone) {
+    this.zoneInfo.set(zone.zone_id, {
+      name: zone.display_name,
+      length: (zone.now_playing && zone.now_playing.length) ?? null,
+      state: zone.state,
+    });
   }
 
   _matches(zone) {
@@ -58,11 +74,13 @@ class TrackWatcher extends EventEmitter {
       const wasPlaying = this.playingZones.size > 0;
       this.lastKey.clear();
       this.playingZones.clear();
+      this.zoneInfo.clear();
       const matched = [];
       for (const zone of msg.zones) {
         if (!this._matches(zone)) continue;
         matched.push(zone.display_name);
         this.lastKey.set(zone.zone_id, trackKey(zone));
+        this._recordZone(zone);
         if (zone.state === 'playing') this.playingZones.add(zone.zone_id);
       }
       const isPlaying = this.playingZones.size > 0;
@@ -76,12 +94,28 @@ class TrackWatcher extends EventEmitter {
       if (Array.isArray(msg.zones_removed)) {
         for (const zoneId of msg.zones_removed) {
           this.lastKey.delete(zoneId);
+          this.zoneInfo.delete(zoneId);
           if (this.playingZones.delete(zoneId)) this._emitIdleIfQuiet();
         }
       }
       if (Array.isArray(msg.zones_added)) this._processZones(msg.zones_added, knownKeys);
       if (Array.isArray(msg.zones_changed)) this._processZones(msg.zones_changed, null);
-      // msg.zones_seek_changed: playhead ticks — deliberately ignored.
+      // Playhead ticks: enrich with the cached length/name and surface as 'seek'
+      // for the sleep timer. Only known (matched) zones are in zoneInfo, so
+      // ticks from filtered-out zones are naturally dropped.
+      if (Array.isArray(msg.zones_seek_changed)) {
+        for (const e of msg.zones_seek_changed) {
+          const info = this.zoneInfo.get(e.zone_id);
+          if (!info) continue;
+          this.emit('seek', {
+            zoneId: e.zone_id,
+            zoneName: info.name,
+            seekPosition: e.seek_position,
+            length: info.length,
+            state: info.state,
+          });
+        }
+      }
     }
     // 'Unsubscribed' / 'NetworkError' (msg undefined): nothing to do; on
     // re-pair a fresh Subscribed snapshot replaces state.
@@ -96,6 +130,7 @@ class TrackWatcher extends EventEmitter {
   _processZones(zones, silentSeedKeys) {
     for (const zone of zones) {
       if (!this._matches(zone)) continue;
+      this._recordZone(zone);
       const key = trackKey(zone);
       if (zone.state === 'playing' && key && key !== this.lastKey.get(zone.zone_id)) {
         if (silentSeedKeys && !this.lastKey.has(zone.zone_id) && silentSeedKeys.has(key)) {
@@ -104,6 +139,7 @@ class TrackWatcher extends EventEmitter {
           this.lastKey.set(zone.zone_id, key);
           const t = (zone.now_playing && zone.now_playing.three_line) || {};
           this.emit('track', {
+            zoneId: zone.zone_id,
             zoneName: zone.display_name,
             title: t.line1 || '',
             artist: t.line2 || '',

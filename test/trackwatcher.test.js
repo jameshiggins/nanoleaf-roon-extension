@@ -49,7 +49,7 @@ test('new track while playing emits exactly once', () => {
   w.handleEvent('Changed', { zones_changed: [next] });
   w.handleEvent('Changed', { zones_changed: [next] }); // duplicate delivery (e.g. volume move)
   assert.equal(ev.track.length, 1);
-  assert.deepEqual(ev.track[0], { zoneName: 'Study', title: 'D', artist: 'B', album: 'C', imageKey: null, key: 'D|B|C|200' });
+  assert.deepEqual(ev.track[0], { zoneId: 'z1', zoneName: 'Study', title: 'D', artist: 'B', album: 'C', imageKey: null, key: 'D|B|C|200' });
 });
 
 test('track event carries the album image_key when present', () => {
@@ -190,6 +190,50 @@ test('zones_added with a genuinely new track still emits', () => {
   w.handleEvent('Changed', { zones_added: [zone('z9', 'Kitchen', 'playing', { title: 'NEW', artist: 'B', album: 'C' })] });
   assert.equal(ev.track.length, 1);
   assert.equal(ev.track[0].title, 'NEW');
+});
+
+test('seek ticks are enriched with cached length/name/state and emitted', () => {
+  const w = new TrackWatcher();
+  const seeks = [];
+  w.on('seek', (s) => seeks.push(s));
+  w.handleEvent('Subscribed', {
+    zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C', length: 240 })],
+  });
+  w.handleEvent('Changed', { zones_seek_changed: [{ zone_id: 'z1', seek_position: 123 }] });
+  assert.equal(seeks.length, 1);
+  assert.deepEqual(seeks[0], {
+    zoneId: 'z1', zoneName: 'Study', seekPosition: 123, length: 240, state: 'playing',
+  });
+});
+
+test('seek state reflects the last zone update (pause suppresses a stale playing)', () => {
+  const w = new TrackWatcher();
+  const seeks = [];
+  w.on('seek', (s) => seeks.push(s));
+  const t = { title: 'A', artist: 'B', album: 'C', length: 100 };
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', t)] });
+  w.handleEvent('Changed', { zones_changed: [zone('z1', 'Study', 'paused', t)] });
+  w.handleEvent('Changed', { zones_seek_changed: [{ zone_id: 'z1', seek_position: 50 }] });
+  assert.equal(seeks[0].state, 'paused', 'cached state updates when the zone pauses');
+});
+
+test('seek ticks from unknown/unmatched zones are dropped', () => {
+  const w = new TrackWatcher({ zone: 'study' });
+  const seeks = [];
+  w.on('seek', (s) => seeks.push(s));
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: '', album: '', length: 100 })] });
+  w.handleEvent('Changed', { zones_seek_changed: [{ zone_id: 'zK', seek_position: 5 }] }); // Kitchen, never matched
+  assert.equal(seeks.length, 0);
+});
+
+test('seek length follows track changes', () => {
+  const w = new TrackWatcher();
+  const seeks = [];
+  w.on('seek', (s) => seeks.push(s));
+  w.handleEvent('Subscribed', { zones: [zone('z1', 'Study', 'playing', { title: 'A', artist: 'B', album: 'C', length: 100 })] });
+  w.handleEvent('Changed', { zones_changed: [zone('z1', 'Study', 'playing', { title: 'D', artist: 'B', album: 'C', length: 321 })] });
+  w.handleEvent('Changed', { zones_seek_changed: [{ zone_id: 'z1', seek_position: 10 }] });
+  assert.equal(seeks[0].length, 321, 'cached length updated on the new track');
 });
 
 test('zones event reports matched vs all names for typo diagnostics', () => {
