@@ -123,7 +123,12 @@ async function runService(configFile) {
           log.debug(`album colors unavailable: ${err.message}`);
         });
     });
-    watcher.on('idle', () => renderer && renderer.setNowPlaying(null));
+    watcher.on('playing', () => renderer && renderer.acquire().catch((err) => log.error(err.message)));
+    watcher.on('idle', () => {
+      if (!renderer) return;
+      renderer.setNowPlaying(null);
+      renderer.release();
+    });
     watcher.on('zones', ({ matched, all }) => {
       if (cfg.roon.zone && matched.length === 0) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
@@ -133,20 +138,22 @@ async function runService(configFile) {
       onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
       wantImages: cfg.visuals.albumColors,
     });
-    roon.start();
+    // roon.start() is deferred until after the renderer exists (below). Roon can be
+    // playing the instant we subscribe, and that first 'playing' must reach a live
+    // renderer — starting here would fire it into a null renderer and never acquire.
   }
   const setStatus = (msg, isErr) => {
     log.info(`status: ${msg}`);
     if (roon) roon.setStatus(msg, isErr);
   };
 
-  // Nanoleaf: validate token, fetch layout, power on, enter streaming mode.
+  // Nanoleaf: validate the token and fetch the layout. We deliberately do NOT power on
+  // or enter extControl here — the renderer takes the panels when Roon starts playing
+  // and gives them back when it stops.
   const client = new NanoleafClient(cfg.nanoleaf);
   let layout;
   try {
     layout = await client.getLayout();
-    await client.setPower(true);
-    await client.enableExtControl();
   } catch (err) {
     if (err instanceof NanoleafHttpError && err.status === 401) {
       console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
@@ -155,13 +162,14 @@ async function runService(configFile) {
     throw err; // transient (controller offline) → exit 1, service manager retries
   }
   const panels = prepareLayout(layout.positionData);
-  log.info(`nanoleaf ready: ${panels.length} panels, streaming at ${cfg.nanoleaf.fps} fps`);
+  log.info(`nanoleaf ready: ${panels.length} panels, ${cfg.nanoleaf.fps} fps when playing`);
 
   const streamer = new Streamer({ host: cfg.nanoleaf.host, fps: cfg.nanoleaf.fps });
   const source = createSource(cfg.audio);
   renderer = new VisualRenderer({
     source,
     streamer,
+    client,
     layout: panels,
     config: cfg.visuals,
     fps: cfg.nanoleaf.fps,
@@ -173,6 +181,16 @@ async function runService(configFile) {
 
   renderer.start();
   source.start();
+
+  // Start Roon only now that the renderer is live, so the first 'playing' from an
+  // already-playing zone triggers acquire (see the deferral note above).
+  if (roon) roon.start();
+
+  // Without Roon there is no play/idle signal, so hold the panels for the whole run.
+  if (!cfg.roon.enabled) {
+    log.info('roon disabled — acquiring panels for the lifetime of the process');
+    await renderer.acquire();
+  }
 
   // Companion-app control + telemetry server (open it on your Shield).
   let control = null;
@@ -193,10 +211,15 @@ async function runService(configFile) {
     }
   }
 
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info('shutting down');
     source.stop();
     if (control) control.stop();
+    // Hand the panels back before exiting, rather than leaving them stuck in extControl.
+    try { await renderer.releaseNow(); } catch (err) { log.error(`shutdown: ${err.message}`); }
     renderer.stop(); // sends the blackout frame
     setTimeout(() => {
       streamer.close();

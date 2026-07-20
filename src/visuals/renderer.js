@@ -102,6 +102,19 @@ class VisualRenderer extends EventEmitter {
     this.renderTimer = null;
     this.rotateTimer = null;
 
+    // Panel ownership: the renderer only holds the panels while Roon is playing.
+    // acquire() (on 'playing') saves the current effect + power, enters extControl and
+    // streams; release() (debounced, on 'idle') restores exactly what it found. While
+    // released the render timer is off and no frames go out, so whatever effect the
+    // panels were showing stays on screen.
+    this.client = opts.client || null;
+    this.releaseDebounceMs = opts.releaseDebounceMs ?? 5000;
+    this.acquired = false;
+    this.savedEffect = null;
+    this.savedPower = null;
+    this._acquireInFlight = false;
+    this._releaseTimer = null;
+
     this._onFormat = (fmt) => this.features.setFormat(fmt);
     this._onPcm = (chunk) => this.features.onChunk(chunk);
   }
@@ -111,7 +124,9 @@ class VisualRenderer extends EventEmitter {
     this.rotate(true); // pick the first combo
     this.source.on('format', this._onFormat);
     this.source.on('pcm', this._onPcm);
-    this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
+    // NB: no render timer here — frames only flow once acquire() takes the panels.
+    // Keeping the feature extractor warm means the first frame after acquire is
+    // already band-informed rather than starting from silence.
     this._armRotateTimer();
   }
 
@@ -119,9 +134,112 @@ class VisualRenderer extends EventEmitter {
     this.started = false;
     clearInterval(this.renderTimer);
     clearInterval(this.rotateTimer);
+    clearTimeout(this._releaseTimer);
+    this.renderTimer = null;
+    this.rotateTimer = null;
+    this._releaseTimer = null;
     this.source.off('format', this._onFormat);
     this.source.off('pcm', this._onPcm);
     this.streamer.blackout(this.layout.map((p) => p.id));
+  }
+
+  // ---- panel ownership ----
+
+  /**
+   * Take the panels: save what they were showing, power on, enter extControl and
+   * start streaming. Idempotent, and cancels a pending release.
+   */
+  async acquire() {
+    if (this._releaseTimer) this._cancelPendingRelease();
+    if (this.acquired || this._acquireInFlight) return;
+    this._acquireInFlight = true;
+    try {
+      if (this.client) {
+        try {
+          // Snapshot before touching anything so release() can put it all back.
+          // `*Dynamic*` means something was already streaming — not restorable — so keep
+          // any effect saved on an earlier acquire that never released cleanly.
+          const [effect, power] = await Promise.all([
+            this.client.getSelectedEffect(),
+            this.client.getPower(),
+          ]);
+          if (effect && effect !== '*Dynamic*' && String(effect).trim().length > 0) {
+            this.savedEffect = effect;
+            this.savedPower = power;
+            log.info(`acquire: saved effect "${effect}" (panels were ${power ? 'on' : 'off'})`);
+          } else if (this.savedEffect) {
+            log.info(`acquire: reusing previously-saved effect "${this.savedEffect}"`);
+          } else {
+            log.info('acquire: panels were already in *Dynamic*; nothing to restore later');
+          }
+          await this.client.setPower(true);
+          await this.client.enableExtControl();
+        } catch (err) {
+          log.error(`acquire failed: ${err.message}`);
+        }
+      }
+      this.acquired = true;
+      if (!this.renderTimer) {
+        this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
+      }
+      log.info('acquired: streaming to panels');
+      this.emit('state', this.getState());
+    } finally {
+      this._acquireInFlight = false;
+    }
+  }
+
+  /** Give the panels back once Roon has been idle for the debounce window. */
+  release({ debounceMs = this.releaseDebounceMs } = {}) {
+    if (!this.acquired) return;
+    if (this._releaseTimer) return; // already scheduled
+    log.info(`release scheduled in ${debounceMs} ms (waiting for Roon idle)`);
+    this._releaseTimer = setTimeout(() => this._doRelease(), debounceMs);
+  }
+
+  /** Release immediately, skipping the debounce (shutdown). */
+  async releaseNow() {
+    if (this._releaseTimer) this._cancelPendingRelease();
+    if (!this.acquired) return;
+    await this._doRelease();
+  }
+
+  _cancelPendingRelease() {
+    if (this._releaseTimer) {
+      clearTimeout(this._releaseTimer);
+      this._releaseTimer = null;
+      log.info('release cancelled — Roon resumed within the debounce window');
+    }
+  }
+
+  async _doRelease() {
+    this._releaseTimer = null;
+    if (!this.acquired) return;
+    if (this.renderTimer) {
+      clearInterval(this.renderTimer);
+      this.renderTimer = null;
+    }
+    this.acquired = false;
+    this.gate = 0; // next acquire fades up from black rather than resuming mid-look
+    if (this.client) {
+      try {
+        if (this.savedEffect) {
+          await this.client.selectEffect(this.savedEffect);
+          log.info(`released: restored effect "${this.savedEffect}"`);
+        } else {
+          log.info('released: no saved effect to restore, panels stay in *Dynamic*');
+        }
+        // Selecting an effect powers panels on, so restore power last — otherwise
+        // panels that were off before we took them would be left on.
+        if (this.savedPower === false) {
+          await this.client.setPower(false);
+          log.info('released: panels powered back off (they were off before)');
+        }
+      } catch (err) {
+        log.error(`release: failed to restore panels: ${err.message}`);
+      }
+    }
+    this.emit('state', this.getState());
   }
 
   _armRotateTimer() {
@@ -204,6 +322,7 @@ class VisualRenderer extends EventEmitter {
       locked: this.config.rotate === 'off',
       nowPlaying: this.nowPlaying,
       panels: this.layout.length,
+      acquired: this.acquired,
     };
   }
 

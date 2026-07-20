@@ -100,6 +100,25 @@ class NanoleafClient {
   async setPower(on) {
     return this._request('PUT', this._authed('/state'), { on: { value: !!on } });
   }
+
+  /** Whether the panels are currently powered on. */
+  async getPower() {
+    const res = await this._request('GET', this._authed('/state/on'));
+    return !!(res && res.value);
+  }
+
+  /**
+   * Name of the currently selected effect. The controller reports `*Dynamic*` while
+   * something is streaming to it, which is not a restorable effect.
+   */
+  async getSelectedEffect() {
+    return this._request('GET', this._authed('/effects/select'));
+  }
+
+  /** Re-select a named effect, handing the panels back to whatever had them before. */
+  async selectEffect(name) {
+    return this._request('PUT', this._authed('/effects'), { select: name });
+  }
 }
 
 module.exports = { NanoleafClient, NanoleafHttpError };
