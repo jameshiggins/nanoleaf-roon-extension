@@ -109,11 +109,17 @@ class VisualRenderer extends EventEmitter {
     // panels were showing stays on screen.
     this.client = opts.client || null;
     this.releaseDebounceMs = opts.releaseDebounceMs ?? 5000;
+    // How often to re-assert extControl while acquired. The controller drops streaming
+    // mode if anything else grabs the panels (someone picks a scene in the Nanoleaf app,
+    // a schedule, HomeKit) — re-asserting on this interval takes ownership back within a
+    // few seconds so the visuals always win while music plays.
+    this.extControlKeepaliveMs = opts.extControlKeepaliveMs ?? 4000;
     this.acquired = false;
     this.savedEffect = null;
     this.savedPower = null;
     this._acquireInFlight = false;
     this._releaseTimer = null;
+    this._extControlTimer = null;
 
     this._onFormat = (fmt) => this.features.setFormat(fmt);
     this._onPcm = (chunk) => this.features.onChunk(chunk);
@@ -135,6 +141,7 @@ class VisualRenderer extends EventEmitter {
     clearInterval(this.renderTimer);
     clearInterval(this.rotateTimer);
     clearTimeout(this._releaseTimer);
+    this._stopExtControlKeepalive();
     this.renderTimer = null;
     this.rotateTimer = null;
     this._releaseTimer = null;
@@ -182,10 +189,32 @@ class VisualRenderer extends EventEmitter {
       if (!this.renderTimer) {
         this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
       }
+      this._startExtControlKeepalive();
       log.info('acquired: streaming to panels');
       this.emit('state', this.getState());
     } finally {
       this._acquireInFlight = false;
+    }
+  }
+
+  /**
+   * Re-assert extControl on an interval so the visuals reclaim the panels if anything
+   * else takes them (a scene picked in the Nanoleaf app, a schedule) — the controller
+   * silently leaves streaming mode and ignores our frames until we re-enter it.
+   */
+  _startExtControlKeepalive() {
+    if (this._extControlTimer || !this.client) return;
+    this._extControlTimer = setInterval(() => {
+      if (!this.acquired) return;
+      this.client.enableExtControl().catch((err) => log.debug(`extControl keepalive: ${err.message}`));
+    }, this.extControlKeepaliveMs);
+    this._extControlTimer.unref();
+  }
+
+  _stopExtControlKeepalive() {
+    if (this._extControlTimer) {
+      clearInterval(this._extControlTimer);
+      this._extControlTimer = null;
     }
   }
 
@@ -219,6 +248,7 @@ class VisualRenderer extends EventEmitter {
       clearInterval(this.renderTimer);
       this.renderTimer = null;
     }
+    this._stopExtControlKeepalive();
     this.acquired = false;
     this.gate = 0; // next acquire fades up from black rather than resuming mid-look
     if (this.client) {

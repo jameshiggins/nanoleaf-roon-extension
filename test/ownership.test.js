@@ -35,7 +35,7 @@ function fakeClient({ effect = 'Vintage Modern', power = false } = {}) {
   };
 }
 
-function make({ client, cfg = {}, releaseDebounceMs = 5 } = {}) {
+function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs = 100000 } = {}) {
   const source = new EventEmitter();
   const streamer = { frames: [], blackouts: [], sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); } };
   const renderer = new VisualRenderer({
@@ -44,6 +44,7 @@ function make({ client, cfg = {}, releaseDebounceMs = 5 } = {}) {
     config: { ...BASE_CFG, ...cfg },
     fps: 30,
     releaseDebounceMs,
+    extControlKeepaliveMs, // large by default so it doesn't perturb other tests
     rng: () => 0.42,
   });
   return { renderer, streamer, client };
@@ -161,6 +162,33 @@ test('acquire is idempotent — a second playing event does not re-enter extCont
   assert.equal(renderer.savedEffect, 'Vintage Modern', 'saved effect survives re-acquire');
   assert.equal(client.calls.filter((c) => c === 'enableExtControl').length, 1, 'acquired once');
   renderer.stop();
+});
+
+test('re-asserts extControl on an interval while acquired (reclaims the panels)', async () => {
+  const client = fakeClient({ effect: 'Vintage Modern', power: true });
+  const { renderer } = make({ client, extControlKeepaliveMs: 15 });
+  renderer.start();
+  await renderer.acquire();
+  const afterAcquire = client.calls.filter((c) => c === 'enableExtControl').length;
+  assert.equal(afterAcquire, 1, 'acquire enters extControl once');
+
+  await sleep(70); // several keepalive intervals
+  const afterKeepalive = client.calls.filter((c) => c === 'enableExtControl').length;
+  assert.ok(afterKeepalive >= 3, `extControl re-asserted repeatedly, got ${afterKeepalive}`);
+  renderer.stop();
+});
+
+test('keepalive stops re-asserting extControl once released', async () => {
+  const client = fakeClient({ effect: 'Vintage Modern', power: true });
+  const { renderer } = make({ client, extControlKeepaliveMs: 15 });
+  renderer.start();
+  await renderer.acquire();
+  await renderer.releaseNow();
+  const atRelease = client.calls.filter((c) => c === 'enableExtControl').length;
+
+  await sleep(70);
+  const later = client.calls.filter((c) => c === 'enableExtControl').length;
+  assert.equal(later, atRelease, 'no extControl re-asserts after release');
 });
 
 test('a failing controller still starts streaming rather than dying', async () => {
