@@ -119,10 +119,13 @@ class VisualRenderer extends EventEmitter {
     // a schedule, HomeKit) — re-asserting on this interval takes ownership back within a
     // few seconds so the visuals always win while music plays.
     this.extControlKeepaliveMs = opts.extControlKeepaliveMs ?? this.config.extControlKeepaliveMs ?? 4000;
-    this.acquired = false;
+    this.acquired = false;      // realized: are we currently streaming / holding extControl
     this.savedEffect = null;
     this.savedPower = null;
-    this._acquireInFlight = false;
+    this._want = 'released';     // desired ownership, set synchronously by acquire()/release()
+    this._reconciling = false;  // single-flight guard for the async transition
+    this._reconcileAgain = false;
+    this._reconcilePromise = Promise.resolve();
     this._releaseTimer = null;
     this._extControlTimer = null;
 
@@ -150,62 +153,153 @@ class VisualRenderer extends EventEmitter {
     this.renderTimer = null;
     this.rotateTimer = null;
     this._releaseTimer = null;
+    this.acquired = false;   // reset ownership so a reused renderer can re-acquire cleanly
+    this._want = 'released';
     this.source.off('format', this._onFormat);
     this.source.off('pcm', this._onPcm);
     this.streamer.blackout(this.layout.map((p) => p.id));
   }
 
   // ---- panel ownership ----
+  //
+  // acquire()/release()/releaseNow() only set the DESIRED state (`_want`) and kick a
+  // reconcile. _reconcile() is single-flight and drives the REALIZED state (this.acquired,
+  // the render/keepalive timers, the controller's extControl mode) toward `_want`.
+  // Separating desired from realized removes the races a single synchronous `acquired`
+  // boolean had: an 'idle' arriving mid-acquire (was silently dropped), an acquire landing
+  // during a release's restore (corrupted panel state), and shutdown firing before an
+  // in-flight acquire finished (left panels stuck in extControl). Callers can await the
+  // reconcile; concurrent calls share and await the same in-flight promise.
 
-  /**
-   * Take the panels: save what they were showing, power on, enter extControl and
-   * start streaming. Idempotent, and cancels a pending release.
-   */
-  async acquire() {
-    if (this._releaseTimer) this._cancelPendingRelease();
-    if (this.acquired || this._acquireInFlight) return;
-    this._acquireInFlight = true;
-    try {
-      if (this.client) {
-        try {
-          // Snapshot before touching anything so release() can put it all back.
-          // `*Dynamic*` means something was already streaming — not restorable — so keep
-          // any effect saved on an earlier acquire that never released cleanly.
-          const [effect, power] = await Promise.all([
-            this.client.getSelectedEffect(),
-            this.client.getPower(),
-          ]);
-          if (effect && effect !== '*Dynamic*' && String(effect).trim().length > 0) {
-            this.savedEffect = effect;
-            this.savedPower = power;
-            log.info(`acquire: saved effect "${effect}" (panels were ${power ? 'on' : 'off'})`);
-          } else if (this.savedEffect) {
-            log.info(`acquire: reusing previously-saved effect "${this.savedEffect}"`);
-          } else {
-            log.info('acquire: panels were already in *Dynamic*; nothing to restore later');
-          }
-          await this.client.setPower(true);
-          await this.client.enableExtControl();
-        } catch (err) {
-          log.error(`acquire failed: ${err.message}`);
-        }
-      }
-      this.acquired = true;
-      if (!this.renderTimer) {
-        this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
-      }
-      this._startExtControlKeepalive();
-      log.info('acquired: streaming to panels');
-      this.emit('state', this.getState());
-    } finally {
-      this._acquireInFlight = false;
+  /** Roon started playing: we want the panels. */
+  acquire() {
+    this._want = 'acquired';
+    this._cancelPendingRelease();
+    return this._reconcile();
+  }
+
+  /** Roon went idle: give the panels back after the debounce window. */
+  release({ debounceMs = this.releaseDebounceMs } = {}) {
+    this._want = 'released';
+    if (this._releaseTimer) return; // debounce already scheduled
+    if (!this.acquired && !this._reconciling) return; // nothing held or being taken
+    log.info(`release scheduled in ${debounceMs} ms (waiting for Roon idle)`);
+    this._releaseTimer = setTimeout(() => {
+      this._releaseTimer = null;
+      this._reconcile();
+    }, debounceMs);
+  }
+
+  /** Release immediately, skipping the debounce (shutdown). Resolves once restored. */
+  async releaseNow() {
+    this._want = 'released';
+    this._cancelPendingRelease();
+    await this._reconcile();
+  }
+
+  _cancelPendingRelease() {
+    if (this._releaseTimer) {
+      clearTimeout(this._releaseTimer);
+      this._releaseTimer = null;
+      log.info('release cancelled — Roon resumed within the debounce window');
     }
   }
 
   /**
-   * Re-assert extControl on an interval so the visuals reclaim the panels if anything
-   * else takes them (a scene picked in the Nanoleaf app, a schedule) — the controller
-   * silently leaves streaming mode and ignores our frames until we re-enter it.
+   * Single-flight reconcile: drive realized ownership toward `_want`, looping until it
+   * matches. A concurrent call flags a re-run and returns the same in-flight promise, so
+   * the latest intent always wins and awaiters see the final state.
+   * @returns {Promise<void>}
+   */
+  _reconcile() {
+    if (this._reconciling) {
+      this._reconcileAgain = true;
+      return this._reconcilePromise;
+    }
+    this._reconciling = true;
+    this._reconcilePromise = (async () => {
+      try {
+        do {
+          this._reconcileAgain = false;
+          if (this._want === 'acquired' && !this.acquired) {
+            await this._enterAcquired();
+          } else if (this._want === 'released' && this.acquired) {
+            if (this._releaseTimer) break; // debounce still pending; its timer re-runs us
+            await this._exitAcquired();
+          }
+        } while (this._reconcileAgain);
+      } finally {
+        this._reconciling = false;
+      }
+    })();
+    return this._reconcilePromise;
+  }
+
+  async _enterAcquired() {
+    if (this.client) {
+      try {
+        // Snapshot before touching anything so release can put it back. `*Dynamic*` means
+        // something was already streaming (not restorable) — keep any effect saved earlier.
+        const [effect, power] = await Promise.all([
+          this.client.getSelectedEffect(),
+          this.client.getPower(),
+        ]);
+        if (effect && effect !== '*Dynamic*' && String(effect).trim().length > 0) {
+          this.savedEffect = effect;
+          this.savedPower = power;
+          log.info(`acquire: saved effect "${effect}" (panels were ${power ? 'on' : 'off'})`);
+        } else if (this.savedEffect) {
+          log.info(`acquire: reusing previously-saved effect "${this.savedEffect}"`);
+        } else {
+          log.info('acquire: panels were already in *Dynamic*; nothing to restore later');
+        }
+        await this.client.setPower(true);
+        await this.client.enableExtControl();
+      } catch (err) {
+        log.error(`acquire failed: ${err.message}`);
+      }
+    }
+    this.acquired = true;
+    if (!this.renderTimer) this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
+    this._startExtControlKeepalive();
+    log.info('acquired: streaming to panels');
+    this.emit('state', this.getState());
+  }
+
+  async _exitAcquired() {
+    if (this.renderTimer) {
+      clearInterval(this.renderTimer);
+      this.renderTimer = null;
+    }
+    this._stopExtControlKeepalive();
+    this.streamer.pause(); // stop the UDP last-frame keepalive so the panels aren't frozen
+    this.acquired = false;
+    this.gate = 0; // next acquire fades up from black rather than resuming mid-look
+    if (this.client) {
+      try {
+        if (this.savedEffect) {
+          await this.client.selectEffect(this.savedEffect);
+          log.info(`released: restored effect "${this.savedEffect}"`);
+        } else {
+          log.info('released: no saved effect to restore, panels stay in *Dynamic*');
+        }
+        // Selecting an effect powers panels on, so restore power last — otherwise panels
+        // that were off before we took them would be left on.
+        if (this.savedPower === false) {
+          await this.client.setPower(false);
+          log.info('released: panels powered back off (they were off before)');
+        }
+      } catch (err) {
+        log.error(`release: failed to restore panels: ${err.message}`);
+      }
+    }
+    this.emit('state', this.getState());
+  }
+
+  /**
+   * Re-assert extControl on an interval so the visuals reclaim the panels if anything else
+   * takes them (a scene picked in the Nanoleaf app, a schedule) — the controller silently
+   * leaves streaming mode and ignores our frames until we re-enter it.
    */
   _startExtControlKeepalive() {
     if (this._extControlTimer || !this.client) return;
@@ -221,60 +315,6 @@ class VisualRenderer extends EventEmitter {
       clearInterval(this._extControlTimer);
       this._extControlTimer = null;
     }
-  }
-
-  /** Give the panels back once Roon has been idle for the debounce window. */
-  release({ debounceMs = this.releaseDebounceMs } = {}) {
-    if (!this.acquired) return;
-    if (this._releaseTimer) return; // already scheduled
-    log.info(`release scheduled in ${debounceMs} ms (waiting for Roon idle)`);
-    this._releaseTimer = setTimeout(() => this._doRelease(), debounceMs);
-  }
-
-  /** Release immediately, skipping the debounce (shutdown). */
-  async releaseNow() {
-    if (this._releaseTimer) this._cancelPendingRelease();
-    if (!this.acquired) return;
-    await this._doRelease();
-  }
-
-  _cancelPendingRelease() {
-    if (this._releaseTimer) {
-      clearTimeout(this._releaseTimer);
-      this._releaseTimer = null;
-      log.info('release cancelled — Roon resumed within the debounce window');
-    }
-  }
-
-  async _doRelease() {
-    this._releaseTimer = null;
-    if (!this.acquired) return;
-    if (this.renderTimer) {
-      clearInterval(this.renderTimer);
-      this.renderTimer = null;
-    }
-    this._stopExtControlKeepalive();
-    this.acquired = false;
-    this.gate = 0; // next acquire fades up from black rather than resuming mid-look
-    if (this.client) {
-      try {
-        if (this.savedEffect) {
-          await this.client.selectEffect(this.savedEffect);
-          log.info(`released: restored effect "${this.savedEffect}"`);
-        } else {
-          log.info('released: no saved effect to restore, panels stay in *Dynamic*');
-        }
-        // Selecting an effect powers panels on, so restore power last — otherwise
-        // panels that were off before we took them would be left on.
-        if (this.savedPower === false) {
-          await this.client.setPower(false);
-          log.info('released: panels powered back off (they were off before)');
-        }
-      } catch (err) {
-        log.error(`release: failed to restore panels: ${err.message}`);
-      }
-    }
-    this.emit('state', this.getState());
   }
 
   _armRotateTimer() {
@@ -434,6 +474,9 @@ class VisualRenderer extends EventEmitter {
   /** @param {'track'|'off'|number} mode */
   setRotate(mode) {
     if (mode !== 'track' && mode !== 'off' && !(typeof mode === 'number' && mode > 0)) return this.config.rotate;
+    // Floor a numeric interval to minSeconds (>=1s): the config-load floor doesn't apply
+    // on the live command path, and a tiny value would arm a runaway rotate/render storm.
+    if (typeof mode === 'number') mode = Math.max(this.config.minSeconds || 1, mode);
     this.config.rotate = mode;
     this._armRotateTimer();
     this.emit('state', this.getState());

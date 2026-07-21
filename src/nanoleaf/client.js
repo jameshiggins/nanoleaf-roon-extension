@@ -42,23 +42,28 @@ class NanoleafClient {
           res.on('data', (c) => chunks.push(c));
           res.on('end', () => {
             if (res.statusCode < 200 || res.statusCode >= 300) {
-              return reject(new NanoleafHttpError(res.statusCode, method, path));
+              return reject(new NanoleafHttpError(res.statusCode, method, this._redact(path)));
             }
             const text = Buffer.concat(chunks).toString('utf8');
             if (!text) return resolve(null);
             try {
               resolve(JSON.parse(text));
             } catch {
-              reject(new Error(`nanoleaf ${method} ${path}: invalid JSON response`));
+              reject(new Error(`nanoleaf ${method} ${this._redact(path)}: invalid JSON response`));
             }
           });
         }
       );
-      req.on('timeout', () => req.destroy(new Error(`nanoleaf ${method} ${path}: timeout`)));
+      req.on('timeout', () => req.destroy(new Error(`nanoleaf ${method} ${this._redact(path)}: timeout`)));
       req.on('error', reject);
       if (payload) req.write(payload);
       req.end();
     });
+  }
+
+  /** Strip the auth token out of a path so it never lands in error messages / logs. */
+  _redact(path) {
+    return this.token ? String(path).split(this.token).join('<token>') : path;
   }
 
   _authed(path) {

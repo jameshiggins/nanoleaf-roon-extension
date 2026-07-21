@@ -18,7 +18,7 @@ const BASE_CFG = {
 };
 
 function fakeStreamer() {
-  return { frames: [], blackouts: [], sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); } };
+  return { frames: [], blackouts: [], sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); }, pause() {} };
 }
 
 function loudChunk(frames = 1000) {
@@ -55,6 +55,13 @@ test('rotate picks a visual + palette and reports status', () => {
   assert.ok(renderer.currentName, 'a visual is chosen');
   assert.ok(renderer.currentPalette && renderer.currentPalette.name);
   assert.ok(renderer.visual, 'a visualizer instance exists');
+});
+
+test('setRotate floors a tiny numeric interval (rotate-storm DoS guard)', () => {
+  const { renderer } = make({ minSeconds: 8 });
+  const result = renderer.setRotate(0.001);
+  assert.ok(result >= 8, `should clamp to minSeconds, got ${result}`);
+  assert.equal(renderer.config.rotate, result);
 });
 
 test('renders frames from loud audio, all panels addressed', () => {

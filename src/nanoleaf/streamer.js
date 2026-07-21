@@ -83,6 +83,15 @@ class Streamer {
     this.sendFrame(panelIds.map((id) => ({ id, r: 0, g: 0, b: 0, transition: 1 })));
   }
 
+  /**
+   * Stop the last-frame keepalive from re-sending stale frames. Called on release so the
+   * panels aren't held frozen on the last visual after we hand them back; the next
+   * sendFrame() re-arms streaming normally.
+   */
+  pause() {
+    this.lastPayload = null;
+  }
+
   _transmit(payload, now) {
     this.pending = null;
     this.lastSentAt = now;

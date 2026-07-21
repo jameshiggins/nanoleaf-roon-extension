@@ -119,6 +119,18 @@ test('POST /api/command rejects bad JSON and unknown commands', async () => {
   });
 });
 
+test('POST /api/command rejects a non-JSON content-type (CSRF guard)', async () => {
+  await withServer(async ({ renderer, port }) => {
+    const before = renderer.currentName;
+    const res = await fetch(`http://127.0.0.1:${port}/api/command`, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ cmd: 'visual', value: 'ripple' }),
+    });
+    assert.equal(res.status, 415, 'text/plain body is rejected');
+    assert.equal(renderer.currentName, before, 'renderer was not driven by the simple cross-origin POST');
+  });
+});
+
 test('SSE /events sends hello then live frames', async () => {
   await withServer(async ({ renderer, port }) => {
     const res = await fetch(`http://127.0.0.1:${port}/events`, { headers: { Accept: 'text/event-stream' } });

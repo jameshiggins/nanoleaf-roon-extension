@@ -37,7 +37,7 @@ function fakeClient({ effect = 'Vintage Modern', power = false } = {}) {
 
 function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs = 100000 } = {}) {
   const source = new EventEmitter();
-  const streamer = { frames: [], blackouts: [], sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); } };
+  const streamer = { frames: [], blackouts: [], paused: 0, sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); }, pause() { this.paused++; } };
   const renderer = new VisualRenderer({
     source, streamer, client,
     layout: LAYOUT,
@@ -189,6 +189,56 @@ test('keepalive stops re-asserting extControl once released', async () => {
   await sleep(70);
   const later = client.calls.filter((c) => c === 'enableExtControl').length;
   assert.equal(later, atRelease, 'no extControl re-asserts after release');
+});
+
+test('idle arriving mid-acquire is NOT lost (reconcile releases after acquire finishes)', async () => {
+  // The race the reconcile model fixes: release() used to no-op because `acquired` was
+  // still false during acquire's awaited REST calls, leaving the panels held forever.
+  const client = fakeClient({ effect: 'Vintage Modern', power: true });
+  let openGate;
+  const gate = new Promise((r) => { openGate = r; });
+  const orig = client.enableExtControl.bind(client);
+  client.enableExtControl = async () => { await gate; return orig(); };
+
+  const { renderer } = make({ client, releaseDebounceMs: 10 });
+  renderer.start();
+  const acq = renderer.acquire();   // blocks inside enableExtControl
+  await sleep(5);
+  renderer.release();               // idle mid-acquire — must be honored, not dropped
+  openGate();
+  await acq;
+  await sleep(40);                  // debounce + release
+  assert.equal(renderer.acquired, false, 'released after the in-flight acquire completed');
+  assert.ok(client.calls.includes('selectEffect(Vintage Modern)'), 'restored the saved scene');
+  renderer.stop();
+});
+
+test('releaseNow during an in-flight acquire restores before it resolves (shutdown race)', async () => {
+  const client = fakeClient({ effect: 'Vintage Modern', power: true });
+  let openGate;
+  const gate = new Promise((r) => { openGate = r; });
+  const orig = client.enableExtControl.bind(client);
+  client.enableExtControl = async () => { await gate; return orig(); };
+
+  const { renderer } = make({ client });
+  renderer.start();
+  const acq = renderer.acquire();
+  await sleep(5);
+  const rel = renderer.releaseNow(); // shutdown fires before acquire finished
+  openGate();
+  await rel;                         // must resolve only AFTER the restore completed
+  assert.equal(renderer.acquired, false);
+  assert.ok(client.calls.includes('selectEffect(Vintage Modern)'), 'panels restored before releaseNow resolved');
+  await acq;
+});
+
+test('release pauses the streamer keepalive so panels are not left frozen', async () => {
+  const client = fakeClient({ effect: 'Vintage Modern', power: true });
+  const { renderer, streamer } = make({ client });
+  renderer.start();
+  await renderer.acquire();
+  await renderer.releaseNow();
+  assert.ok(streamer.paused >= 1, 'streamer.pause() called on release');
 });
 
 test('a failing controller still starts streaming rather than dying', async () => {

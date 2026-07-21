@@ -148,6 +148,13 @@ class ControlServer {
   }
 
   _command(req, res) {
+    // Require an application/json content-type. A "simple" cross-origin POST (text/plain)
+    // triggers no CORS preflight, so without this check any web page on the LAN could drive
+    // the panels/settings via CSRF. application/json forces a preflight the browser blocks.
+    const ctype = String(req.headers['content-type'] || '');
+    if (!ctype.toLowerCase().includes('application/json')) {
+      return this._json(res, 415, { ok: false, error: 'Content-Type must be application/json' });
+    }
     const chunks = [];
     let size = 0;
     req.on('data', (c) => {

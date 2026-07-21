@@ -212,7 +212,7 @@ async function runService(configFile) {
   }
 
   let shuttingDown = false;
-  const shutdown = async () => {
+  const shutdown = async (code = 0) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down');
@@ -223,11 +223,15 @@ async function runService(configFile) {
     renderer.stop(); // sends the blackout frame
     setTimeout(() => {
       streamer.close();
-      process.exit(0);
+      process.exit(code);
     }, 100); // give the blackout datagram a moment to leave
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+  // A crash must still restore the panels rather than leave them frozen in extControl;
+  // route through the same shutdown, then exit non-zero so the service manager restarts.
+  process.on('uncaughtException', (err) => { log.error(`uncaughtException: ${(err && err.stack) || err}`); shutdown(1); });
+  process.on('unhandledRejection', (err) => { log.error(`unhandledRejection: ${(err && err.stack) || err}`); shutdown(1); });
 }
 
 async function main() {
