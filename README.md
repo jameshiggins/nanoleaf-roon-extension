@@ -16,7 +16,7 @@ Roon Core ──PCM──▶ nanoleaf-roon-extension ──UDP frames──▶ N
        track change ─────▶ rotate visualizer + palette
 ```
 
-- **30+ visualizers** (pulse, spectrum bars, ripples, comets, spinning hue wheels, sweeps,
+- **28 visualizers** (spectrum bars, ripples, comets, spinning hue wheels, sweeps,
   sparkle, VU meters, fire, …) — see [docs/VISUALS.md](docs/VISUALS.md) or `npm run visuals`.
 - **36+ procedurally-generated palettes** (golden-angle hues × color-harmony schemes) —
   raise `visuals.palettes` for more. Together that's **1,000+ distinct looks** in rotation.
@@ -60,16 +60,26 @@ Then in Roon, **Settings → Extensions** → enable *Nanoleaf Roon Extension*, 
 
 ## How it works
 
+The extension **borrows the panels only while Roon is playing** and hands them back untouched
+when the music stops — it does not stream to them continuously.
+
 1. **Audio in** — `slimproto` (Squeezebox player) or `capture` (ffmpeg loopback) delivers raw
    s16le PCM. Both are Roon-native ways to get the real signal out.
 2. **Analyze** — a cheap DSP stage (one-pole band filters, bass-flux onset detection; no FFT)
    turns each chunk into level/stereo/band/beat features.
-3. **Visualize** — the active visualizer paints all panels from those features, using the panel
-   layout for spatial motion (left/right, rings, sweeps).
-4. **Stream** — frames go out at 30 fps over extControl v2 UDP; a silence gate fades to black
-   between tracks.
+3. **Acquire on play** — when Roon starts playing, the extension saves the panels' current scene
+   and power state, powers them on, and enters extControl v2 streaming mode.
+4. **Visualize & stream** — the active visualizer paints all panels from those features (spatial
+   motion from the layout — left/right, rings, sweeps) and frames go out at 30 fps over extControl
+   v2 UDP, each with `transition: 0` so beats and motion land instantly instead of fading. A
+   silence gate fades to black through quiet passages. Every few seconds it re-asserts extControl,
+   so if anything else grabs the panels mid-song (the Nanoleaf app, a schedule, HomeKit) the
+   visuals reclaim them within a few seconds.
 5. **Rotate** — Roon track changes (via the transport API) trigger a switch to a new
    visualizer + palette.
+6. **Release on stop** — when Roon goes idle, the extension restores exactly the scene (and power
+   state) it found, after a short debounce so a brief pause or track skip doesn't flap the panels.
+   With `roon.enabled: false` there is no play/idle signal, so it holds the panels for the whole run.
 
 ## Running it permanently
 

@@ -8,7 +8,7 @@
  Roon Core ───┤ AudioSource        PCM     FeatureExtractor      VisualRenderer          Streamer    │
    │          │ ┌──────────────┐  chunks  ┌────────────────┐   ┌──────────────────┐  ┌─────────────┐ │   UDP 60222
    ├ slimproto┼▶│ SlimprotoSrc │───────▶│ bands / onset /  │─▶│ visualizer.render │─▶│ extControl  │─┼─▶ Nanoleaf
-   ├ capture ─┼▶│ CaptureSource│        │ level features   │   │ (30+) × palette   │  │ v2 encoder  │ │   controller
+   ├ capture ─┼▶│ CaptureSource│        │ level features   │   │ (28) × palette    │  │ v2 encoder  │ │   controller
    │ (ffmpeg) │ │ StdinSource  │        └────────────────┘   │ + silence gate    │  │ + UDP pacer │ │
    │          │ └──────────────┘                             └──────────────────┘  └─────────────┘ │
    │          │                                                        ▲                            │
@@ -19,7 +19,16 @@
 ```
 
 The Roon extension connection (pairing + status + track-change rotation) is **optional to the
-audio path**: visuals keep rendering from the stream even if Roon drops — only rotation pauses.
+audio path**: the DSP and visualizer keep running from the stream even if Roon drops — only
+rotation pauses.
+
+**Panel ownership.** The renderer holds the panels *only while Roon is playing*. On the first
+`playing` event it `acquire()`s — saving the panels' current effect and power, powering on, and
+entering extControl — then streams; on `idle` it `release()`s after a debounce, restoring exactly
+the effect (and power) it saved. While acquired it re-asserts extControl every few seconds so the
+visuals reclaim the panels if anything else (the Nanoleaf app, a schedule, HomeKit) takes them.
+With `roon.enabled: false` there is no play/idle signal, so it acquires once and holds the panels
+for the process lifetime.
 
 ## Modules
 
@@ -34,11 +43,11 @@ audio path**: visuals keep rendering from the stream even if Roon drops — only
 | `src/audio/pcm.js` | Pure PCM math: interleaved s16le → peak/RMS, `EnvelopeFollower` (one-pole attack/release) | — |
 | `src/dsp/features.js` | `FeatureExtractor`: PCM → bass/mid/treble bands (one-pole split, no FFT), level/stereo envelopes, `OnsetDetector` (bass-flux beat flag) | pcm.js |
 | `src/visuals/palettes.js` | `hsv`/`mix`/`dim` helpers + `generatePalettes()` (golden-angle hues × harmony schemes) | — |
-| `src/visuals/visualizers.js` | 12 parametric engines × variant grid → 30+ named visualizers; `createVisual`, `describeVisuals` | palettes |
+| `src/visuals/visualizers.js` | 11 parametric engines × variant grid → 28 named visualizers (the pulse family was cut); `createVisual`, `describeVisuals` | palettes |
 | `src/visuals/layout.js` | `prepareLayout()`: panel positions → normalized nx/ny, left→right, drop pseudo-panel | — |
 | `src/visuals/shuffle.js` | `ShuffleBag` (no-repeat rotation) + `filterNames` (include/exclude) | — |
-| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer | features, visualizers, palettes, shuffle |
-| `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `setPower`, `identify` | http |
+| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer; panel ownership (`acquire`/`release`/`releaseNow` via a single-flight `_reconcile`, debounced release, extControl keepalive) | features, visualizers, palettes, shuffle |
+| `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `setPower`, `getPower`, `getSelectedEffect`, `selectEffect`, `identify` | http |
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |
 | `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle`/`zones` (no Roon dependency) | — |
@@ -63,9 +72,20 @@ audio path**: visuals keep rendering from the stream even if Roon drops — only
 
 ## Error handling & lifecycle
 
-- `SIGINT`/`SIGTERM` → stop source → black frame → close sockets → exit 0 (clean for
-  systemd/NSSM restarts).
-- Nanoleaf HTTP 401 → logged as "re-pair needed" (distinct exit code 3) so service managers
-  don't hot-loop a dead credential.
+- **Acquire / release.** `acquire()` (on Roon `playing`) saves the panels' effect + power and
+  enters extControl; `release()` (on `idle`) restores them after a `releaseDebounceMs` (default
+  5 s) debounce, so a brief pause or track skip doesn't flap the panels. Both only set the
+  *desired* state and kick a single-flight `_reconcile()` that drives the realized state toward it,
+  so an `idle` arriving mid-acquire (or an acquire during a release) can't corrupt panel state. A
+  keepalive re-asserts extControl every `extControlKeepaliveMs` (default 4 s) so the visuals
+  reclaim the panels if anything else grabs them.
+- `SIGINT`/`SIGTERM` → stop source → `releaseNow()` (restore the saved scene, skipping the
+  debounce) → black frame → close sockets → exit 0 (clean for systemd/NSSM restarts).
+- `uncaughtException` / `unhandledRejection` → route through the same shutdown (restore the panels
+  rather than leave them frozen in extControl), then exit **1** so the service manager restarts.
+- Startup config problems (missing/invalid `config.json`, absent host/token) → exit **2**
+  (`EXIT_CONFIG`).
+- Nanoleaf HTTP 401 → logged as "re-pair needed", exit **3** (`EXIT_REPAIR_NEEDED`) so service
+  managers don't hot-loop a dead credential.
 - extControl streams idle out on the controller side after ~10 s without datagrams; the
   streamer sends keepalive frames (last frame re-sent at 1 Hz) during silence.
