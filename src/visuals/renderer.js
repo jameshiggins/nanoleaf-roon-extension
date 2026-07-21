@@ -64,7 +64,12 @@ class VisualRenderer extends EventEmitter {
     this.rng = opts.rng ?? Math.random;
 
     this.features = new FeatureExtractor({
-      mapping: { gain: this.config.gain, attackMs: this.config.attackMs, releaseMs: this.config.releaseMs },
+      mapping: {
+        gain: this.config.gain,
+        attackMs: this.config.attackMs,
+        releaseMs: this.config.releaseMs,
+        onsetSensitivity: this.config.onsetSensitivity,
+      },
       now: this.now,
     });
 
@@ -108,12 +113,12 @@ class VisualRenderer extends EventEmitter {
     // released the render timer is off and no frames go out, so whatever effect the
     // panels were showing stays on screen.
     this.client = opts.client || null;
-    this.releaseDebounceMs = opts.releaseDebounceMs ?? 5000;
+    this.releaseDebounceMs = opts.releaseDebounceMs ?? this.config.releaseDebounceMs ?? 5000;
     // How often to re-assert extControl while acquired. The controller drops streaming
     // mode if anything else grabs the panels (someone picks a scene in the Nanoleaf app,
     // a schedule, HomeKit) — re-asserting on this interval takes ownership back within a
     // few seconds so the visuals always win while music plays.
-    this.extControlKeepaliveMs = opts.extControlKeepaliveMs ?? 4000;
+    this.extControlKeepaliveMs = opts.extControlKeepaliveMs ?? this.config.extControlKeepaliveMs ?? 4000;
     this.acquired = false;
     this.savedEffect = null;
     this.savedPower = null;

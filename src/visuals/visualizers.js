@@ -26,7 +26,9 @@ const BLACK = { r: 0, g: 0, b: 0 };
 function frame(layout, colorAt) {
   return layout.map((p, i) => {
     const c = colorAt(p, i) || BLACK;
-    return { id: p.id, r: c.r, g: c.g, b: c.b, transition: 1 };
+    // transition 0 = instant. We drive 30 fps ourselves; letting the panels fade over
+    // 100 ms per frame low-passes every beat and motion into a soft blur.
+    return { id: p.id, r: c.r, g: c.g, b: c.b, transition: 0 };
   });
 }
 
@@ -57,45 +59,6 @@ class BaseEngine {
   /** A random hue from the swatch set. */
   randSwatch() {
     return this.swatches[Math.floor(this.rng() * this.swatches.length)];
-  }
-}
-
-/** Loudness pulse. Modes: stereo placement, mono, or a center blob grown by the bass. */
-class PulseEngine extends BaseEngine {
-  constructor(...args) {
-    super(...args);
-    this.angle = 0; // orbiting core phase (center mode)
-  }
-  render(f, dtMs) {
-    const flash = this.decayFlash(f, dtMs);
-    const base = hsv(this.palette.base, 1, 1);
-    const hit = hsv(this.palette.hit, 0.6, 1);
-    const n = this.layout.length;
-
-    // Center mode: a bright core orbits the blob (speed rides the energy) and beats
-    // kick the blob outward, so it stays in motion instead of just breathing.
-    this.angle = (this.angle + (50 + 320 * f.energy) * (dtMs / 1000)) % 360;
-    const rad = (this.angle * Math.PI) / 180;
-    const orbitR = 0.12 + 0.2 * f.mid;
-    const ox = 0.5 + Math.cos(rad) * orbitR;
-    const oy = 0.5 + Math.sin(rad) * orbitR;
-    const reach = 0.15 + 0.6 * f.bass + 0.5 * flash; // beat kick expands the blob
-
-    return frame(this.layout, (p, i) => {
-      let level;
-      if (this.opts.mode === 'mono') {
-        level = f.rms;
-      } else if (this.opts.mode === 'center') {
-        const blob = Math.max(0, 1 - Math.hypot(p.nx - 0.5, p.ny - 0.5) / reach);
-        const core = Math.exp(-(((p.nx - ox) ** 2 + (p.ny - oy) ** 2)) / 0.02) * (0.55 + 0.45 * f.treble);
-        level = f.rms * Math.max(blob, core);
-      } else {
-        const pos = n === 1 ? 0.5 : i / (n - 1);
-        level = f.left * (1 - pos) + f.right * pos;
-      }
-      if (level < 0.02 && flash === 0) return BLACK;
-      return mix(dim(base, level), hit, flash * 0.7);
-    });
   }
 }
 
@@ -458,11 +421,9 @@ function buildRegistry() {
   const reg = new Map();
   const add = (name, Engine, opts, description) => reg.set(name, { Engine, opts, description });
 
-  for (const [mode, desc] of [
-    ['stereo', 'stereo loudness pulse, beats flash bright'],
-    ['mono', 'whole-wall loudness pulse'],
-    ['center', 'bass blob growing from the center'],
-  ]) add(mode === 'stereo' ? 'pulse' : `pulse-${mode === 'center' ? 'blob' : mode}`, PulseEngine, { mode }, desc);
+  // The pulse family (pulse / pulse-mono / pulse-blob) is intentionally NOT registered:
+  // it is scalar "breathing" with no traveling element and consistently reads as dull.
+  // Cut in favor of the motion-driven engines below.
 
   add('bars', BarsEngine, { axis: 'x' }, 'bass/mid/treble columns left to right');
   add('bars-vertical', BarsEngine, { axis: 'y' }, 'bass at the bottom, treble on top');

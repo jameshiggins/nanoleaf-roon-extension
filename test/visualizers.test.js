@@ -25,9 +25,10 @@ function seqRng() {
   return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 }
 
-test('registry exposes at least 30 visualizers, all with descriptions', () => {
+test('registry exposes a healthy catalogue, all with descriptions', () => {
   const described = describeVisuals();
-  assert.ok(described.length >= 30, `got ${described.length}`);
+  assert.ok(described.length >= 25, `got ${described.length}`);
+  assert.ok(!described.some((v) => v.name.startsWith('pulse')), 'pulse family is cut');
   for (const v of described) {
     assert.equal(typeof v.name, 'string');
     assert.ok(v.description.length > 0);
@@ -45,7 +46,7 @@ test('every visualizer renders a valid frame for every panel', () => {
       for (const ch of ['r', 'g', 'b']) {
         assert.ok(Number.isFinite(p[ch]) && p[ch] >= 0, `${name}: ${ch}=${p[ch]}`);
       }
-      assert.equal(p.transition, 1);
+      assert.equal(p.transition, 0);
     }
     assert.equal(ids.size, LAYOUT.length, `${name}: covers every panel exactly once`);
   }
@@ -77,7 +78,7 @@ test('every visualizer stays finite across a simulated song', () => {
 
 test('level-driven visualizers are dark when silent', () => {
   // these map brightness to level, so silence should be (near) black
-  for (const name of ['pulse', 'pulse-mono', 'bars', 'vu', 'vu-tower', 'fire']) {
+  for (const name of ['bars', 'vu', 'vu-tower', 'fire']) {
     const viz = createVisual(name, LAYOUT, PALETTE, seqRng());
     const frame = viz.render(QUIET, 33);
     const maxBright = Math.max(...frame.map((p) => Math.max(p.r, p.g, p.b)));
@@ -85,12 +86,12 @@ test('level-driven visualizers are dark when silent', () => {
   }
 });
 
-test('a beat visibly brightens the pulse visualizer', () => {
-  const viz = createVisual('pulse', LAYOUT, PALETTE, seqRng());
+test('a beat visibly brightens a beat-reactive visualizer', () => {
+  const viz = createVisual('sections', LAYOUT, PALETTE, seqRng());
   const noBeat = viz.render({ ...LOUD, onset: false }, 33);
   const beat = viz.render({ ...LOUD, onset: true }, 33);
   const sum = (fr) => fr.reduce((s, p) => s + p.r + p.g + p.b, 0);
-  assert.ok(sum(beat) > sum(noBeat), 'onset flash should add brightness');
+  assert.ok(sum(beat) > sum(noBeat), 'onset should add brightness');
 });
 
 test('createVisual rejects an unknown name', () => {

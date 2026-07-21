@@ -39,11 +39,14 @@ const DEFAULTS = {
     attackMs: 5,         // envelope rise time constant
     releaseMs: 180,      // envelope fall time constant
     silenceFloor: 0.02,  // energy below this fades the panels to black
+    onsetSensitivity: 1.1, // beat-detection strictness (lower = more beats/livelier)
+    releaseDebounceMs: 5000,   // how long panels are held after Roon goes idle
+    extControlKeepaliveMs: 4000, // re-assert extControl this often while playing
   },
   control: {
     enabled: true,       // companion-app HTTP/SSE server (open it on your Shield)
     port: 8787,
-    host: '0.0.0.0',     // set to 127.0.0.1 to keep it off the LAN
+    host: '127.0.0.1',   // localhost only by default; set to 0.0.0.0 to expose on the LAN
     frameHz: 20,         // telemetry frame rate pushed to the app
   },
 };
@@ -140,6 +143,9 @@ function validate(cfg, errors) {
   num(cfg.visuals.attackMs, 'visuals.attackMs', 0, 5000);
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);
   num(cfg.visuals.silenceFloor, 'visuals.silenceFloor', 0, 1);
+  num(cfg.visuals.onsetSensitivity, 'visuals.onsetSensitivity', 0, 10);
+  num(cfg.visuals.releaseDebounceMs, 'visuals.releaseDebounceMs', 0, 60000);
+  num(cfg.visuals.extControlKeepaliveMs, 'visuals.extControlKeepaliveMs', 500, 60000);
 
   if (typeof cfg.control.enabled !== 'boolean') errors.push('control.enabled: expected true or false');
   num(cfg.control.port, 'control.port', 1, 65535);

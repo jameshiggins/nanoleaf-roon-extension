@@ -82,7 +82,10 @@ class BandSplitter {
 }
 
 class OnsetDetector {
-  constructor({ historyLength = 43, sensitivity = 1.5, floor = 0.01, refractoryMs = 150 } = {}) {
+  // sensitivity default 1.1 (was 1.5) and the mean margin 1.05 (was 1.3): the old bar
+  // (mean*1.3 + 1.5σ) rarely cleared on compressed/steady-kick tracks, starving every
+  // beat-driven visualizer. Lower = more beats detected (livelier), higher = stricter.
+  constructor({ historyLength = 43, sensitivity = 1.1, floor = 0.01, refractoryMs = 150 } = {}) {
     this.history = [];
     this.historyLength = historyLength; // ~1.5 s of 35 ms chunks
     this.sensitivity = sensitivity;
@@ -98,7 +101,7 @@ class OnsetDetector {
     if (h.length >= 8) {
       const mean = h.reduce((s, v) => s + v, 0) / h.length;
       const variance = h.reduce((s, v) => s + (v - mean) * (v - mean), 0) / h.length;
-      const threshold = Math.max(this.floor, mean * 1.3 + this.sensitivity * Math.sqrt(variance));
+      const threshold = Math.max(this.floor, mean * 1.05 + this.sensitivity * Math.sqrt(variance));
       if (bassEnergy > threshold && nowMs - this.lastOnsetAt >= this.refractoryMs) {
         onset = true;
         this.lastOnsetAt = nowMs;
@@ -131,7 +134,9 @@ class FeatureExtractor {
       mid: new EnvelopeFollower(env),
       treble: new EnvelopeFollower(env),
     };
-    this.onsetDetector = new OnsetDetector();
+    this.onsetDetector = new OnsetDetector(
+      opts.mapping?.onsetSensitivity != null ? { sensitivity: opts.mapping.onsetSensitivity } : {}
+    );
     this.pendingOnset = false;
     this.sampleRate = opts.sampleRate ?? 44100;
   }

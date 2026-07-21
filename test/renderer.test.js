@@ -143,7 +143,7 @@ test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () 
   // The wall can't be observed from a headless run, so verify the color math:
   // the same scene + hues, rendered with Vintage Modern's sat/val vs a
   // full-saturation palette, must come out measurably less saturated (and warm).
-  const { renderer } = make({ include: ['pulse'] });
+  const { renderer } = make({ include: ['wheel'] });
   renderer.rotate(true); // establish a scene so renderFrame has a visual
   for (let i = 0; i < 12; i++) { renderer.features.onChunk(loudChunk()); renderer.renderFrame(); } // raise gate
 
@@ -151,10 +151,10 @@ test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () 
   const retroPal = resolvePalette('Vintage Modern');                 // same hues, muted sat/val
 
   renderer.features.onChunk(loudChunk());
-  renderer._apply('pulse', plainPal, 'test');
+  renderer._apply('wheel', plainPal, 'test');
   const plain = renderer.renderFrame();
   renderer.features.onChunk(loudChunk());
-  renderer._apply('pulse', retroPal, 'test');
+  renderer._apply('wheel', retroPal, 'test');
   const muted = renderer.renderFrame();
 
   const meanSat = (fr) => {
@@ -180,7 +180,7 @@ test('a palette with sat/val mutes and warms the frame (vintage tone pass)', () 
 
 test('setLivePalette overrides the pin, rebuilds the visual, persists across rotations; clear reverts', () => {
   const seq = (() => { let s = 0.2; return () => (s = (s * 7919 + 0.577) % 1); })();
-  const { renderer } = make({ palette: 'Vintage Modern', include: ['pulse', 'wheel', 'ripple'] }, { rng: seq });
+  const { renderer } = make({ palette: 'Vintage Modern', include: ['bars', 'wheel', 'ripple'] }, { rng: seq });
   renderer.rotate(true);
   assert.equal(renderer.currentPalette.name, 'Vintage Modern', 'starts on the pin');
 

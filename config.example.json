@@ -7,7 +7,12 @@
   },
   "audio": {
     "source": "capture",
-    "captureArgs": ["-f", "alsa", "-i", "hw:Loopback,1,0"],
+    "captureArgs": [
+      "-f",
+      "alsa",
+      "-i",
+      "hw:Loopback,1,0"
+    ],
     "sampleRate": 48000,
     "channels": 2,
     "server": "192.168.1.10",
@@ -25,18 +30,21 @@
     "palette": "",
     "albumColors": false,
     "albumSat": 0.9,
-    "albumVal": 1.0,
+    "albumVal": 1,
     "rotate": "track",
     "minSeconds": 8,
-    "gain": 1.0,
+    "gain": 1,
     "attackMs": 5,
     "releaseMs": 180,
-    "silenceFloor": 0.02
+    "silenceFloor": 0.02,
+    "onsetSensitivity": 1.1,
+    "releaseDebounceMs": 5000,
+    "extControlKeepaliveMs": 4000
   },
   "control": {
     "enabled": true,
     "port": 8787,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "frameHz": 20
   }
 }

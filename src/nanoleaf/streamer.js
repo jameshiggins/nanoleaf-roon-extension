@@ -10,7 +10,9 @@ const KEEPALIVE_MS = 1000; // controller drops extControl after ~10 s of silence
 /**
  * Encode one v2 frame.
  * @param {Array<{id: number, r: number, g: number, b: number, w?: number, transition?: number}>} panels
- *        transition is in units of 100 ms (0 or 1 for streaming).
+ *        transition is in units of 100 ms. Default 0 = instant: at 30 fps a new frame
+ *        arrives every ~33 ms, so any non-zero fade leaves the panels always
+ *        interpolating a few frames behind and smears beats/motion into a blur.
  * @returns {Buffer}
  */
 function encodeFrameV2(panels) {
@@ -23,7 +25,7 @@ function encodeFrameV2(panels) {
     buf[o + 3] = clamp8(p.g);
     buf[o + 4] = clamp8(p.b);
     buf[o + 5] = clamp8(p.w ?? 0);
-    buf.writeUInt16BE(p.transition ?? 1, o + 6);
+    buf.writeUInt16BE(p.transition ?? 0, o + 6);
     o += 8;
   }
   return buf;

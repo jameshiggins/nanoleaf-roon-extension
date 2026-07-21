@@ -26,9 +26,9 @@ test('encodeFrameV2: clamps and rounds color values', () => {
   assert.equal(buf[6], 13);   // b rounded
 });
 
-test('encodeFrameV2: default transition is 1', () => {
+test('encodeFrameV2: default transition is 0 (instant — we drive our own fps)', () => {
   const buf = encodeFrameV2([{ id: 1, r: 0, g: 0, b: 0 }]);
-  assert.equal(buf.readUInt16BE(8), 1);
+  assert.equal(buf.readUInt16BE(8), 0);
 });
 
 function udpReceiver() {
