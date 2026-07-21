@@ -178,6 +178,20 @@ test('re-asserts extControl on an interval while acquired (reclaims the panels)'
   renderer.stop();
 });
 
+test('keepalive does NOT re-assert extControl while still streaming (no periodic hitch)', async () => {
+  // The controller still reports *Dynamic* → we already own it, so re-asserting would only
+  // risk hitching the panels. The keepalive should GET, see *Dynamic*, and do nothing.
+  const client = fakeClient({ effect: '*Dynamic*', power: true });
+  const { renderer } = make({ client, extControlKeepaliveMs: 15 });
+  renderer.start();
+  await renderer.acquire();
+  const atAcquire = client.calls.filter((c) => c === 'enableExtControl').length; // 1 from acquire
+  await sleep(70); // several keepalive ticks
+  const after = client.calls.filter((c) => c === 'enableExtControl').length;
+  assert.equal(after, atAcquire, 'no re-assert while the controller still reports *Dynamic*');
+  renderer.stop();
+});
+
 test('keepalive stops re-asserting extControl once released', async () => {
   const client = fakeClient({ effect: 'Vintage Modern', power: true });
   const { renderer } = make({ client, extControlKeepaliveMs: 15 });

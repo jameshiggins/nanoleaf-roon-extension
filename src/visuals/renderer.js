@@ -303,9 +303,23 @@ class VisualRenderer extends EventEmitter {
    */
   _startExtControlKeepalive() {
     if (this._extControlTimer || !this.client) return;
-    this._extControlTimer = setInterval(() => {
-      if (!this.acquired) return;
-      this.client.enableExtControl().catch((err) => log.debug(`extControl keepalive: ${err.message}`));
+    this._extControlTimer = setInterval(async () => {
+      if (!this.acquired || this._keepaliveInFlight) return;
+      this._keepaliveInFlight = true;
+      try {
+        // Only re-assert when the controller has actually left extControl (someone set a
+        // scene / a schedule fired). Re-asserting unconditionally every tick can hitch the
+        // panels mid-stream — a cheap GET here avoids that while still reclaiming fast.
+        const sel = await this.client.getSelectedEffect();
+        if (this.acquired && sel !== '*Dynamic*') {
+          await this.client.enableExtControl();
+          log.info('extControl reclaimed — panels had been set to a scene');
+        }
+      } catch (err) {
+        log.debug(`extControl keepalive: ${err.message}`);
+      } finally {
+        this._keepaliveInFlight = false;
+      }
     }, this.extControlKeepaliveMs);
     this._extControlTimer.unref();
   }
@@ -356,6 +370,16 @@ class VisualRenderer extends EventEmitter {
   }
 
   renderFrame() {
+    // Stall detection: if the loop is late by 3+ frames, something blocked the event loop
+    // (GC, a synchronous op, a stalled log write). Logs the gap so we can correlate freezes.
+    const nowMs = this.now();
+    if (this._lastFrameAt) {
+      const gap = nowMs - this._lastFrameAt;
+      const expected = 1000 / this.fps;
+      if (gap > expected * 3) log.warn(`render stall: ${Math.round(gap)}ms gap (expected ~${Math.round(expected)}ms)`);
+    }
+    this._lastFrameAt = nowMs;
+
     const f = this.features.snapshot();
     this.lastFeatures = f;
     // Silence gate: rise quickly when sound returns, fall gently on quiet.
