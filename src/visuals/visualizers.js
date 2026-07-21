@@ -62,18 +62,33 @@ class BaseEngine {
 
 /** Loudness pulse. Modes: stereo placement, mono, or a center blob grown by the bass. */
 class PulseEngine extends BaseEngine {
+  constructor(...args) {
+    super(...args);
+    this.angle = 0; // orbiting core phase (center mode)
+  }
   render(f, dtMs) {
     const flash = this.decayFlash(f, dtMs);
     const base = hsv(this.palette.base, 1, 1);
     const hit = hsv(this.palette.hit, 0.6, 1);
     const n = this.layout.length;
+
+    // Center mode: a bright core orbits the blob (speed rides the energy) and beats
+    // kick the blob outward, so it stays in motion instead of just breathing.
+    this.angle = (this.angle + (50 + 320 * f.energy) * (dtMs / 1000)) % 360;
+    const rad = (this.angle * Math.PI) / 180;
+    const orbitR = 0.12 + 0.2 * f.mid;
+    const ox = 0.5 + Math.cos(rad) * orbitR;
+    const oy = 0.5 + Math.sin(rad) * orbitR;
+    const reach = 0.15 + 0.6 * f.bass + 0.5 * flash; // beat kick expands the blob
+
     return frame(this.layout, (p, i) => {
       let level;
       if (this.opts.mode === 'mono') {
         level = f.rms;
       } else if (this.opts.mode === 'center') {
-        const reach = 0.15 + 0.85 * f.bass;
-        level = f.rms * Math.max(0, 1 - Math.hypot(p.nx - 0.5, p.ny - 0.5) / reach);
+        const blob = Math.max(0, 1 - Math.hypot(p.nx - 0.5, p.ny - 0.5) / reach);
+        const core = Math.exp(-(((p.nx - ox) ** 2 + (p.ny - oy) ** 2)) / 0.02) * (0.55 + 0.45 * f.treble);
+        level = f.rms * Math.max(blob, core);
       } else {
         const pos = n === 1 ? 0.5 : i / (n - 1);
         level = f.left * (1 - pos) + f.right * pos;
