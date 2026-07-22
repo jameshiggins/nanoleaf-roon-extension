@@ -117,7 +117,10 @@ async function runService(configFile) {
       currentTrackKey = track.key;
       if (!albumColors) return;
       if (!track.imageKey) { renderer.clearLivePalette(); return; } // no art → pinned palette
-      albumColors(roon, track.imageKey, cfg.visuals)
+      // Sometimes derive the palette from the cover's most-present colors instead of the
+      // usual vibrant spread (visuals.albumPredominantChance).
+      const predominant = Math.random() < cfg.visuals.albumPredominantChance;
+      albumColors(roon, track.imageKey, { ...cfg.visuals, predominant })
         .then((palette) => {
           if (track.key !== currentTrackKey) return; // a newer track won the race
           if (palette) renderer.setLivePalette(palette);

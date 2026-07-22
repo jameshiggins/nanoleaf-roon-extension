@@ -34,6 +34,8 @@ const DEFAULTS = {
     albumSat: 0.9,       // tone-pass saturation for album colors (1 = fully vivid)
     albumVal: 1.0,       // tone-pass brightness for album colors
     albumMaxColors: 10,  // most distinct hues to pull from a cover (3–21)
+    albumPredominantChance: 0.33, // chance a track uses the cover's N most-present colors
+    albumPredominantCount: 4,     // how many predominant colors when that mode fires
     rotate: 'track',     // 'track' | 'off' | <seconds>  — when to switch the look
     minSeconds: 8,       // don't rotate more often than this on rapid track skipping
     gain: 1.0,           // linear gain applied to the audio level before mapping
@@ -142,6 +144,8 @@ function validate(cfg, errors) {
   num(cfg.visuals.albumSat, 'visuals.albumSat', 0, 1);
   num(cfg.visuals.albumVal, 'visuals.albumVal', 0, 1);
   num(cfg.visuals.albumMaxColors, 'visuals.albumMaxColors', 3, 21);
+  num(cfg.visuals.albumPredominantChance, 'visuals.albumPredominantChance', 0, 1);
+  num(cfg.visuals.albumPredominantCount, 'visuals.albumPredominantCount', 3, 12);
   num(cfg.visuals.gain, 'visuals.gain', 0, 100);
   num(cfg.visuals.attackMs, 'visuals.attackMs', 0, 5000);
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);

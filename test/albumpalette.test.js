@@ -102,6 +102,24 @@ test('maxSwatches opt caps the count', () => {
   assert.equal(pal.swatches.length, 4, `capped to 4, got ${pal.swatches.length}`);
 });
 
+test('predominant mode picks the most-present color; default picks the most-vibrant', () => {
+  // 60% low-vibrancy teal (hue ~200) + 40% vivid orange (hue ~40).
+  const teal = hsvToRgb(200, 0.3, 0.6);
+  const orange = hsvToRgb(40, 1.0, 1.0);
+  const buf = image(20, 20, (x) => (x < 12 ? teal : orange)); // 12/20 cols teal ≈ 60%
+  const vibrant = extractPalette(buf, 20, 20);                 // default: vibrancy-weighted
+  const present = extractPalette(buf, 20, 20, { predominant: true }); // area-weighted
+  assert.ok(hueDist(vibrant.base, 40) < 20, `default base = the vivid orange, got ${vibrant.base}`);
+  assert.ok(hueDist(present.base, 200) < 20, `predominant base = the most-present teal, got ${present.base}`);
+});
+
+test('predominant mode returns the requested color count', () => {
+  const bands = Array.from({ length: 6 }, (_, k) => hsvToRgb(k * 60, 0.9, 0.9));
+  const buf = image(24, 24, (x) => bands[Math.min(5, Math.floor(x / 4))]);
+  const pal = extractPalette(buf, 24, 24, { predominant: true, predominantCount: 4 });
+  assert.equal(pal.swatches.length, 4, `4 predominant colors, got ${pal.swatches.length}`);
+});
+
 test('monochrome cover still yields 3 swatches (fanned) for the 3-color roles', () => {
   const pal = extractPalette(image(16, 16, () => [200, 160, 40]), 16, 16);
   assert.equal(pal.swatches.length, 3);

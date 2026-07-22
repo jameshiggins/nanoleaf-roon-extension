@@ -56,6 +56,7 @@ function extractPalette(rgba, width, height, opts = {}) {
   const hueApart = opts.hueApart ?? HUE_APART;
   const bins = new Float64Array(BINS);   // accumulated vibrancy weight per hue bin
   const binHueSum = new Float64Array(BINS); // weighted hue sum, for a precise center
+  const binCount = new Float64Array(BINS);  // colored-pixel count per bin (area)
   let weighted = 0;
 
   const n = width * height;
@@ -69,28 +70,39 @@ function extractPalette(rgba, width, height, opts = {}) {
     const bin = Math.min(BINS - 1, Math.floor(h / (360 / BINS)));
     bins[bin] += w;
     binHueSum[bin] += h * w;
+    binCount[bin] += 1;
     weighted += w;
   }
 
   if (weighted === 0) return null; // no colored pixels at all → caller falls back
 
-  // Peak bins by weight, each collapsed to its weighted-average hue.
+  // Peak bins, each collapsed to its weighted-average hue, with both a vibrancy weight
+  // and an area (pixel count).
   const peaks = [];
   for (let b = 0; b < BINS; b++) {
-    if (bins[b] > 0) peaks.push({ hue: binHueSum[b] / bins[b], weight: bins[b] });
+    if (bins[b] > 0) peaks.push({ hue: binHueSum[b] / bins[b], weight: bins[b], count: binCount[b] });
   }
-  peaks.sort((x, y) => y.weight - x.weight);
 
-  const base = peaks[0].hue;
-  // Pull up to MAX_SWATCHES distinct dominant hues so the multi-color scenes can
-  // paint the whole cover, not just three roles.
-  const chosen = [base];
-  for (const p of peaks.slice(1)) {
-    if (chosen.every((h) => hueDist(h, p.hue) >= hueApart)) chosen.push(p.hue);
-    if (chosen.length === maxSwatches) break;
+  let chosen;
+  if (opts.predominant) {
+    // The cover's most PRESENT colors: rank by area (pixel count) and keep the top few
+    // even if they sit close together — a mostly-teal cover should yield teal-family
+    // colors, not forced-distinct accents.
+    const take = Math.max(3, Math.round(opts.predominantCount ?? 4));
+    chosen = peaks.slice().sort((x, y) => y.count - x.count).slice(0, take).map((p) => p.hue);
+  } else {
+    // Vibrant, spread-out distinct hues: pull up to MAX_SWATCHES so the multi-color
+    // scenes can paint the whole cover, not just three roles.
+    peaks.sort((x, y) => y.weight - x.weight);
+    chosen = [peaks[0].hue];
+    for (const p of peaks.slice(1)) {
+      if (chosen.every((h) => hueDist(h, p.hue) >= hueApart)) chosen.push(p.hue);
+      if (chosen.length === maxSwatches) break;
+    }
   }
   // Guarantee at least three for the base/accent/hit roles + contrast on a
   // monochrome cover.
+  const base = chosen[0];
   const fan = [30, 180, 90, 210, 150];
   let fi = 0;
   while (chosen.length < 3) chosen.push((base + fan[fi++ % fan.length]) % 360);

@@ -28,10 +28,12 @@ async function fetchAlbumPalette(roon, imageKey, opts = {}) {
   // Decode on a tiny image; cap memory so a malformed payload can't blow up.
   const img = jpeg.decode(body, { useTArray: true, maxMemoryUsageInMB: 32 });
   return extractPalette(img.data, img.width, img.height, {
-    name: 'Album',
+    name: opts.predominant ? 'Album 4' : 'Album',
     sat: opts.albumSat,
     val: opts.albumVal,
     maxSwatches: opts.albumMaxColors,
+    predominant: opts.predominant,     // area-ranked, top-N most-present colors
+    predominantCount: opts.albumPredominantCount,
   });
 }
 

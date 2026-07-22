@@ -41,7 +41,9 @@
     "releaseDebounceMs": 5000,
     "extControlKeepaliveMs": 4000,
     "flashStrength": 0.5,
-    "albumMaxColors": 10
+    "albumMaxColors": 10,
+    "albumPredominantChance": 0.33,
+    "albumPredominantCount": 4
   },
   "control": {
     "enabled": true,
