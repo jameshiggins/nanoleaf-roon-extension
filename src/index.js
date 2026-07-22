@@ -102,9 +102,7 @@ async function runService(configFile) {
     // stale cover clobber the new one. Any failure falls back to the pinned
     // palette (never dark), matching the "Roon outage never darkens" ethos.
     let currentTrackKey = null;
-    const albumColors = cfg.visuals.albumColors
-      ? require('./visuals/albumcolors').fetchAlbumPalette
-      : null;
+    const { fetchAlbumPalette } = require('./visuals/albumcolors');
     const { resolvePalette } = require('./visuals/palettes');
     // Grayscale cover (no usable color): flip a coin between the Mono grayscale palette
     // and the real Vintage Modern palette, rather than always the same fallback.
@@ -115,12 +113,13 @@ async function runService(configFile) {
       renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
       renderer.onTrackChange();
       currentTrackKey = track.key;
-      if (!albumColors) return;
+      // Checked per track (not cached) so the albumColors lever can be toggled live.
+      if (!cfg.visuals.albumColors) { renderer.clearLivePalette(); return; }
       if (!track.imageKey) { renderer.clearLivePalette(); return; } // no art → pinned palette
       // Sometimes derive the palette from the cover's most-present colors instead of the
       // usual vibrant spread (visuals.albumPredominantChance).
       const predominant = Math.random() < cfg.visuals.albumPredominantChance;
-      albumColors(roon, track.imageKey, { ...cfg.visuals, predominant })
+      fetchAlbumPalette(roon, track.imageKey, { ...cfg.visuals, predominant })
         .then((palette) => {
           if (track.key !== currentTrackKey) return; // a newer track won the race
           if (palette) renderer.setLivePalette(palette);
@@ -144,7 +143,7 @@ async function runService(configFile) {
     });
     roon = new RoonExtension({
       onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
-      wantImages: cfg.visuals.albumColors,
+      wantImages: true, // always request the image service so albumColors can toggle live
     });
     // roon.start() is deferred until after the renderer exists (below). Roon can be
     // playing the instant we subscribe, and that first 'playing' must reach a live
@@ -209,6 +208,8 @@ async function runService(configFile) {
       port: cfg.control.port,
       host: cfg.control.host,
       frameHz: cfg.control.frameHz,
+      // Persist live changes so they survive a restart. Best-effort; the server swallows errors.
+      onChange: () => config.save(configFile, cfg),
     });
     try {
       await control.start();

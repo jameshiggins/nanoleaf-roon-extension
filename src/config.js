@@ -196,4 +196,72 @@ function save(file, cfg) {
   fs.writeFileSync(resolved, JSON.stringify(cfg, null, 2) + '\n');
 }
 
-module.exports = { load, save, fromObject, DEFAULTS, ConfigError };
+/**
+ * The `visuals.*` levers that can be changed live via the control API (POST /api/command
+ * {cmd:'set'}). Each entry drives both value validation and the range the companion menu
+ * reads from GET /api/config. `apply` tells the renderer how to realize the change:
+ *   'set' — just store it (read live or on the next track/rotate)
+ *   'gain' | 'rotate' | 'palette' — routed to the existing renderer setter
+ *   'onset' — update the live onset detector
+ *   'features' — rebuild the feature extractor (envelope constants)
+ *   'pool' — rebuild the visualizer shuffle bag (include/exclude)
+ *   'palettes' — regenerate the palette set + bag
+ */
+const VISUALS_LEVERS = {
+  gain: { type: 'number', min: 0, max: 100, apply: 'gain' },
+  rotate: { type: 'rotate', apply: 'rotate' },
+  palette: { type: 'string', apply: 'palette' },
+  include: { type: 'strings', apply: 'pool' },
+  exclude: { type: 'strings', apply: 'pool' },
+  palettes: { type: 'number', min: 1, max: 1000, apply: 'palettes' },
+  minSeconds: { type: 'number', min: 0, max: 3600, apply: 'set' },
+  flashStrength: { type: 'number', min: 0, max: 1, apply: 'set' },
+  onsetSensitivity: { type: 'number', min: 0, max: 10, apply: 'onset' },
+  silenceFloor: { type: 'number', min: 0, max: 1, apply: 'set' },
+  attackMs: { type: 'number', min: 0, max: 5000, apply: 'features' },
+  releaseMs: { type: 'number', min: 0, max: 10000, apply: 'features' },
+  albumColors: { type: 'boolean', apply: 'set' },
+  albumSat: { type: 'number', min: 0, max: 1, apply: 'set' },
+  albumVal: { type: 'number', min: 0, max: 1, apply: 'set' },
+  albumMaxColors: { type: 'number', min: 3, max: 21, apply: 'set' },
+  albumPredominantChance: { type: 'number', min: 0, max: 1, apply: 'set' },
+  albumPredominantCount: { type: 'number', min: 3, max: 12, apply: 'set' },
+  releaseDebounceMs: { type: 'number', min: 0, max: 60000, apply: 'set' },
+  extControlKeepaliveMs: { type: 'number', min: 500, max: 60000, apply: 'set' },
+};
+
+/**
+ * Validate a single visuals lever value against VISUALS_LEVERS.
+ * @returns {{ ok: true, value } | { ok: false, error: string }}
+ */
+function validateLever(key, value) {
+  const spec = VISUALS_LEVERS[key];
+  if (!spec) return { ok: false, error: `unknown or read-only lever: ${key}` };
+  switch (spec.type) {
+    case 'number':
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < spec.min || value > spec.max) {
+        return { ok: false, error: `${key}: expected a number in [${spec.min}, ${spec.max}]` };
+      }
+      return { ok: true, value };
+    case 'boolean':
+      if (typeof value !== 'boolean') return { ok: false, error: `${key}: expected true or false` };
+      return { ok: true, value };
+    case 'string':
+      if (typeof value !== 'string') return { ok: false, error: `${key}: expected a string` };
+      return { ok: true, value };
+    case 'strings':
+      if (!Array.isArray(value) || value.some((s) => typeof s !== 'string')) {
+        return { ok: false, error: `${key}: expected an array of strings` };
+      }
+      return { ok: true, value };
+    case 'rotate':
+      if (value === 'track' || value === 'off' || (typeof value === 'number' && value > 0 && Number.isFinite(value))) {
+        return { ok: true, value };
+      }
+      return { ok: false, error: `${key}: expected "track", "off", or a positive number` };
+    default:
+      return { ok: false, error: `${key}: unhandled type` };
+  }
+}
+
+module.exports = { load, save, fromObject, DEFAULTS, ConfigError, VISUALS_LEVERS, validateLever };

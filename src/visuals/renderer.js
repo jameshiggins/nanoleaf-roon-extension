@@ -24,6 +24,7 @@ const { FeatureExtractor } = require('../dsp/features');
 const { generatePalettes, resolvePalette } = require('./palettes');
 const { visualNames, describeVisuals, createVisual } = require('./visualizers');
 const { ShuffleBag, filterNames } = require('./shuffle');
+const { VISUALS_LEVERS, validateLever } = require('../config');
 const log = require('../log')('visuals');
 
 /**
@@ -505,6 +506,86 @@ class VisualRenderer extends EventEmitter {
     this._armRotateTimer();
     this.emit('state', this.getState());
     return mode;
+  }
+
+  /** Current value of every live-settable visuals lever (for the companion menu). */
+  getOptions() {
+    const out = {};
+    for (const key of Object.keys(VISUALS_LEVERS)) out[key] = this.config[key];
+    return out;
+  }
+
+  /**
+   * Set one visuals lever live (the control API's `set` command). Validates against the
+   * lever schema and realizes the change per its `apply` mode.
+   * @returns {{ ok: true } | { ok: false, error: string }}
+   */
+  setOption(key, value) {
+    const v = validateLever(key, value);
+    if (!v.ok) return v;
+    switch (VISUALS_LEVERS[key].apply) {
+      case 'gain': this.setGain(value); break;
+      case 'rotate': this.setRotate(value); break;
+      case 'palette': {
+        if (value === '') { this.config.palette = ''; this.pinnedPalette = null; break; }
+        const p = resolvePalette(value, this.config.palettes);
+        if (!p) return { ok: false, error: `unknown palette: ${value}` };
+        this.config.palette = value;
+        this.pinnedPalette = p;
+        if (!this.livePalette) this._apply(this.currentName || this.visualBag.next(), p, 'pinned palette');
+        break;
+      }
+      case 'onset':
+        this.config.onsetSensitivity = value;
+        if (this.features.onsetDetector) this.features.onsetDetector.sensitivity = value;
+        break;
+      case 'features':
+        this.config[key] = value;
+        this._rebuildFeatures();
+        break;
+      case 'pool':
+        this.config[key] = value;
+        this._rebuildPool();
+        break;
+      case 'palettes':
+        this.config.palettes = value;
+        this._rebuildPalettes();
+        break;
+      default: // 'set' — stored; read live or applied on the next track/rotate
+        this.config[key] = value;
+    }
+    this.emit('state', this.getState());
+    return { ok: true };
+  }
+
+  /** Rebuild the visualizer pool + shuffle bag after include/exclude changed. */
+  _rebuildPool() {
+    const names = filterNames(visualNames(), { include: this.config.include, exclude: this.config.exclude });
+    if (names.length === 0) { log.warn('include/exclude left no visualizers — keeping the current pool'); return; }
+    this.poolNames = names;
+    this.visualBag = new ShuffleBag(this.poolNames, { rng: this.rng });
+  }
+
+  /** Regenerate the palette set + bag (and re-resolve the pin) after palettes count changed. */
+  _rebuildPalettes() {
+    this.palettes = generatePalettes(this.config.palettes);
+    this.paletteBag = new ShuffleBag(this.palettes.map((_, i) => i), { rng: this.rng });
+    if (this.config.palette) this.pinnedPalette = resolvePalette(this.config.palette, this.config.palettes) || this.pinnedPalette;
+  }
+
+  /** Rebuild the feature extractor after envelope constants changed, carrying the format. */
+  _rebuildFeatures() {
+    const { sampleRate, channels } = this.features;
+    this.features = new FeatureExtractor({
+      mapping: {
+        gain: this.config.gain,
+        attackMs: this.config.attackMs,
+        releaseMs: this.config.releaseMs,
+        onsetSensitivity: this.config.onsetSensitivity,
+      },
+      now: this.now,
+    });
+    this.features.setFormat({ sampleRate, channels });
   }
 }
 

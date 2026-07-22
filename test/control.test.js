@@ -11,8 +11,11 @@ const LAYOUT = [
   { id: 2, nx: 1, ny: 1 },
 ];
 const CFG = {
-  include: [], exclude: [], palettes: 8, rotate: 'track', minSeconds: 8,
-  gain: 1, attackMs: 5, releaseMs: 180, silenceFloor: 0.02,
+  include: [], exclude: [], palettes: 8, palette: '', rotate: 'track', minSeconds: 8,
+  gain: 1, attackMs: 5, releaseMs: 180, silenceFloor: 0.02, flashStrength: 0.5, onsetSensitivity: 1.1,
+  albumColors: true, albumSat: 0.9, albumVal: 1, albumMaxColors: 10,
+  albumPredominantChance: 0.33, albumPredominantCount: 4,
+  releaseDebounceMs: 5000, extControlKeepaliveMs: 4000,
 };
 
 function makeRenderer() {
@@ -29,6 +32,25 @@ function makeRenderer() {
 }
 
 // ---- applyCommand (pure) ----
+
+test('applyCommand: set drives any visuals lever, validates, rejects unknown', () => {
+  const r = makeRenderer();
+  // valid live set
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'flashStrength', value: 0.2 }).ok, true);
+  assert.equal(r.config.flashStrength, 0.2);
+  // out of range
+  const bad = applyCommand(r, { cmd: 'set', key: 'flashStrength', value: 5 });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /\[0, 1\]/);
+  // unknown / read-only lever
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'nanoleaf.fps', value: 60 }).ok, false);
+  // exclude rebuilds the pool live
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'exclude', value: ['wheel'] }).ok, true);
+  assert.ok(!r.getCatalogue().visuals.some((v) => v.name === 'wheel'), 'wheel dropped from the pool');
+  // album lever stored (applies next track)
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'albumMaxColors', value: 6 }).ok, true);
+  assert.equal(r.config.albumMaxColors, 6);
+});
 
 test('applyCommand: next / lock / unlock / gain', () => {
   const r = makeRenderer();
@@ -72,6 +94,37 @@ async function withServer(fn) {
     server.stop();
   }
 }
+
+test('GET /api/config returns current lever values + ranges for the menu', async () => {
+  await withServer(async ({ port }) => {
+    const cfg = await (await fetch(`http://127.0.0.1:${port}/api/config`)).json();
+    assert.equal(cfg.values.flashStrength, 0.5, 'current value present');
+    assert.equal(cfg.values.albumMaxColors, 10);
+    assert.ok(cfg.levers.flashStrength && cfg.levers.flashStrength.max === 1, 'range present');
+    assert.ok(cfg.levers.gain && cfg.levers.gain.max === 100);
+    assert.equal(Object.keys(cfg.values).length, Object.keys(cfg.levers).length, 'a value per lever');
+  });
+});
+
+test('POST set persists via onChange, once per successful mutating command', async () => {
+  const renderer = makeRenderer();
+  let saves = 0;
+  const server = new ControlServer({ renderer, port: 0, host: '127.0.0.1', onChange: () => { saves += 1; } });
+  const port = await server.start();
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/api/command`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'set', key: 'flashStrength', value: 0.3 }),
+    });
+    assert.equal(ok.status, 200);
+    const bad = await fetch(`http://127.0.0.1:${port}/api/command`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'set', key: 'flashStrength', value: 99 }),
+    });
+    assert.equal(bad.status, 400);
+    assert.equal(saves, 1, 'persist called only for the successful set');
+  } finally { server.stop(); }
+});
 
 test('GET /api/state and /api/catalogue', async () => {
   await withServer(async ({ port }) => {

@@ -22,6 +22,7 @@ const http = require('node:http');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { VISUALS_LEVERS } = require('../config');
 const log = require('../log')('control');
 
 /** Reachable http URLs for the companion app, given the bound host and port. */
@@ -79,11 +80,20 @@ function applyCommand(renderer, body) {
     case 'unlock':
       renderer.setRotate('track');
       break;
+    case 'set': {
+      // Generic live setter for any visuals lever (see config VISUALS_LEVERS).
+      const res = renderer.setOption(body.key, body.value);
+      if (!res.ok) return res;
+      break;
+    }
     default:
       return { ok: false, error: `unknown command: ${cmd}` };
   }
   return { ok: true, state: renderer.getState() };
 }
+
+/** Commands that change persistable config (so the server writes it back to disk). */
+const MUTATING = new Set(['visual', 'palette', 'gain', 'rotate', 'lock', 'unlock', 'set']);
 
 class ControlServer {
   /**
@@ -94,6 +104,7 @@ class ControlServer {
     this.renderer = opts.renderer;
     this.port = opts.port ?? 8787;
     this.host = opts.host ?? '0.0.0.0';
+    this.onChange = opts.onChange ?? null; // called after a mutating command, to persist config
     this.frameInterval = 1000 / (opts.frameHz ?? 20);
     this.clients = new Set();       // Set<ServerResponse> of SSE connections
     this.lastFrameAt = 0;
@@ -141,6 +152,7 @@ class ControlServer {
     if (req.method === 'GET' && p === '/events') return this._openSse(req, res);
     if (req.method === 'GET' && p === '/api/state') return this._json(res, 200, this.renderer.getState());
     if (req.method === 'GET' && p === '/api/catalogue') return this._json(res, 200, this.renderer.getCatalogue());
+    if (req.method === 'GET' && p === '/api/config') return this._json(res, 200, { values: this.renderer.getOptions(), levers: VISUALS_LEVERS });
     if (req.method === 'POST' && p === '/api/command') return this._command(req, res);
     if (req.method === 'GET' && STATIC[p]) return this._static(res, STATIC[p]);
     if (req.method === 'GET' && p === '/favicon.ico') return this._send(res, 204, '', 'image/x-icon');
@@ -170,6 +182,9 @@ class ControlServer {
         return this._json(res, 400, { ok: false, error: 'invalid JSON' });
       }
       const result = applyCommand(this.renderer, body);
+      if (result.ok && this.onChange && MUTATING.has(body && body.cmd)) {
+        try { this.onChange(); } catch (err) { /* persistence is best-effort */ void err; }
+      }
       this._json(res, result.ok ? 200 : 400, result);
     });
   }
