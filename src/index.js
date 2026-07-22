@@ -105,6 +105,11 @@ async function runService(configFile) {
     const albumColors = cfg.visuals.albumColors
       ? require('./visuals/albumcolors').fetchAlbumPalette
       : null;
+    const { resolvePalette } = require('./visuals/palettes');
+    // Grayscale cover (no usable color): flip a coin between the Mono grayscale palette
+    // and the real Vintage Modern palette, rather than always the same fallback.
+    const grayscaleFallback = () =>
+      resolvePalette(Math.random() < 0.5 ? 'Mono' : 'Vintage Modern', cfg.visuals.palettes);
     watcher.on('track', (track) => {
       if (!renderer) return;
       renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
@@ -116,7 +121,7 @@ async function runService(configFile) {
         .then((palette) => {
           if (track.key !== currentTrackKey) return; // a newer track won the race
           if (palette) renderer.setLivePalette(palette);
-          else renderer.clearLivePalette(); // grayscale cover → pinned palette
+          else renderer.setLivePalette(grayscaleFallback()); // grayscale cover → 50/50 Mono/Vintage Modern
         })
         .catch((err) => {
           if (track.key === currentTrackKey) renderer.clearLivePalette();
