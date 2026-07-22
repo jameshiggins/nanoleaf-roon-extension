@@ -53,6 +53,21 @@ class BaseEngine {
     if (f.onset) this.flash = this.flashStrength;
     return this.flash;
   }
+  /**
+   * Should a beat-driven engine spawn an element now? True on a real onset, or — so these
+   * scenes never freeze into a solid background on steady material with few detectable
+   * beats — after a fallback gap that shortens with energy. Call once per render; it
+   * advances the internal timer and resets on any spawn.
+   */
+  spawnDue(f, dtMs) {
+    this._sinceSpawn = (this._sinceSpawn || 0) + dtMs;
+    const maxGap = 950 - 550 * Math.min(1, f.energy); // ~400ms loud … ~950ms soft
+    if (f.onset || (f.energy > 0.04 && this._sinceSpawn >= maxGap)) {
+      this._sinceSpawn = 0;
+      return true;
+    }
+    return false;
+  }
   /** Next hue in the swatch set (cycles — guarantees every color is used). */
   nextSwatch() {
     const h = this.swatches[this._swatchI % this.swatches.length];
@@ -111,7 +126,7 @@ class RippleEngine extends BaseEngine {
     if (this.ripples.length > 4) this.ripples.shift();
   }
   render(f, dtMs) {
-    if (f.onset) {
+    if (this.spawnDue(f, dtMs)) {
       if (this.opts.origin === 'center') {
         this._spawn(f, 0.5, 0.5);
       } else {
@@ -157,7 +172,7 @@ class StreaksEngine extends BaseEngine {
     if (this.streaks.length > 4) this.streaks.shift();
   }
   render(f, dtMs) {
-    if (f.onset) {
+    if (this.spawnDue(f, dtMs)) {
       if (this.opts.mode === 'both') {
         this._launch(f, 1);
         this._launch(f, -1);

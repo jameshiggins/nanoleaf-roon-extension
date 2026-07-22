@@ -104,6 +104,25 @@ test('flashStrength scales the onset flash peak (calmer beats)', () => {
   assert.ok(full.flash > soft.flash, 'default flash is stronger than the reduced one');
 });
 
+test('beat-driven scenes keep moving without beats (fallback spawn, no solid frames)', () => {
+  // With onset never firing, streaks/ripple used to render only a uniform background.
+  for (const name of ['streaks', 'ripple', 'streaks-rain', 'ripple-core']) {
+    const viz = createVisual(name, LAYOUT, PALETTE, seqRng());
+    let maxSpread = 0;
+    for (let i = 0; i < 90; i++) { // ~3s of loud audio, zero beats
+      const fr = viz.render({ ...LOUD, onset: false }, 33);
+      const ch = (k) => fr.map((p) => [p.r, p.g, p.b][k]);
+      const spread = Math.max(
+        Math.max(...ch(0)) - Math.min(...ch(0)),
+        Math.max(...ch(1)) - Math.min(...ch(1)),
+        Math.max(...ch(2)) - Math.min(...ch(2))
+      );
+      maxSpread = Math.max(maxSpread, spread);
+    }
+    assert.ok(maxSpread > 20, `${name} should not go solid without beats, max spread ${maxSpread}`);
+  }
+});
+
 test('createVisual rejects an unknown name', () => {
   assert.throws(() => createVisual('nope', LAYOUT, PALETTE), /unknown visual/);
 });
