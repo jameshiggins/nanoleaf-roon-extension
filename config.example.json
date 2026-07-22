@@ -39,7 +39,8 @@
     "silenceFloor": 0.02,
     "onsetSensitivity": 1.1,
     "releaseDebounceMs": 5000,
-    "extControlKeepaliveMs": 4000
+    "extControlKeepaliveMs": 4000,
+    "flashStrength": 0.5
   },
   "control": {
     "enabled": true,

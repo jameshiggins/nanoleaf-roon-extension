@@ -39,6 +39,7 @@ const DEFAULTS = {
     attackMs: 5,         // envelope rise time constant
     releaseMs: 180,      // envelope fall time constant
     silenceFloor: 0.02,  // energy below this fades the panels to black
+    flashStrength: 0.5,  // beat-flash intensity (0 = no flash, 1 = full bright)
     onsetSensitivity: 1.1, // beat-detection strictness (lower = more beats/livelier)
     releaseDebounceMs: 5000,   // how long panels are held after Roon goes idle
     extControlKeepaliveMs: 4000, // re-assert extControl this often while playing
@@ -143,6 +144,7 @@ function validate(cfg, errors) {
   num(cfg.visuals.attackMs, 'visuals.attackMs', 0, 5000);
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);
   num(cfg.visuals.silenceFloor, 'visuals.silenceFloor', 0, 1);
+  num(cfg.visuals.flashStrength, 'visuals.flashStrength', 0, 1);
   num(cfg.visuals.onsetSensitivity, 'visuals.onsetSensitivity', 0, 10);
   num(cfg.visuals.releaseDebounceMs, 'visuals.releaseDebounceMs', 0, 60000);
   num(cfg.visuals.extControlKeepaliveMs, 'visuals.extControlKeepaliveMs', 500, 60000);

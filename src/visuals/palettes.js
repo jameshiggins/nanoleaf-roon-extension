@@ -112,6 +112,13 @@ const CURATED = [
     base: 41, accent: 135, hit: 4,
     sat: 0.6, val: 0.85,
   },
+  {
+    // Black-and-white: sat 0 collapses every hue to gray, so the tone pass renders
+    // each scene as a pure brightness gradient — the engine's motion in grayscale.
+    name: 'Mono',
+    base: 0, accent: 0, hit: 0,
+    sat: 0, val: 1,
+  },
 ];
 
 /**

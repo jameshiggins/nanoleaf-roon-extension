@@ -94,6 +94,16 @@ test('a beat visibly brightens a beat-reactive visualizer', () => {
   assert.ok(sum(beat) > sum(noBeat), 'onset should add brightness');
 });
 
+test('flashStrength scales the onset flash peak (calmer beats)', () => {
+  const soft = createVisual('wheel', LAYOUT, PALETTE, seqRng(), { flashStrength: 0.3 });
+  soft.render({ ...LOUD, onset: true }, 33);
+  assert.ok(Math.abs(soft.flash - 0.3) < 1e-9, `flash should peak at flashStrength, got ${soft.flash}`);
+
+  const full = createVisual('wheel', LAYOUT, PALETTE, seqRng()); // default 1
+  full.render({ ...LOUD, onset: true }, 33);
+  assert.ok(full.flash > soft.flash, 'default flash is stronger than the reduced one');
+});
+
 test('createVisual rejects an unknown name', () => {
   assert.throws(() => createVisual('nope', LAYOUT, PALETTE), /unknown visual/);
 });

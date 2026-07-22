@@ -33,12 +33,15 @@ function frame(layout, colorAt) {
 }
 
 class BaseEngine {
-  constructor(layout, palette, opts = {}, rng = Math.random) {
+  constructor(layout, palette, opts = {}, rng = Math.random, globals = {}) {
     this.layout = layout;
     this.palette = palette;
     this.opts = opts;
     this.rng = rng;
     this.flash = 0;
+    // Peak value an onset flash reaches (config visuals.flashStrength). Lower = calmer
+    // beats that still register but don't blast full-bright.
+    this.flashStrength = globals.flashStrength ?? 1;
     // Album (and Vintage Modern) palettes carry a swatch set of up to 6 hues;
     // scenes that place discrete colored elements paint through the whole set.
     // Absent for the generated palettes, so their look is unchanged.
@@ -47,7 +50,7 @@ class BaseEngine {
   }
   decayFlash(f, dtMs, ms = 180) {
     this.flash = Math.max(0, this.flash - dtMs / ms);
-    if (f.onset) this.flash = 1;
+    if (f.onset) this.flash = this.flashStrength;
     return this.flash;
   }
   /** Next hue in the swatch set (cycles — guarantees every color is used). */
@@ -477,10 +480,10 @@ function describeVisuals() {
   return [...REGISTRY.entries()].map(([name, v]) => ({ name, description: v.description }));
 }
 
-function createVisual(name, layout, palette, rng) {
+function createVisual(name, layout, palette, rng, globals = {}) {
   const entry = REGISTRY.get(name);
   if (!entry) throw new Error(`unknown visual "${name}" — available: ${visualNames().join(', ')}`);
-  return new entry.Engine(layout, palette, entry.opts, rng);
+  return new entry.Engine(layout, palette, entry.opts, rng, globals);
 }
 
 module.exports = { REGISTRY, visualNames, describeVisuals, createVisual };

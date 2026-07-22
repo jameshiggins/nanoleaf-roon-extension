@@ -57,6 +57,19 @@ test('rotate picks a visual + palette and reports status', () => {
   assert.ok(renderer.visual, 'a visualizer instance exists');
 });
 
+test('Mono palette renders grayscale (tone pass fully desaturates)', () => {
+  const { renderer } = make({ palette: 'Mono' });
+  renderer.rotate(true);
+  for (let i = 0; i < 12; i++) { renderer.features.onChunk(loudChunk()); renderer.renderFrame(); }
+  const frame = renderer.renderFrame();
+  const lit = frame.filter((p) => Math.max(p.r, p.g, p.b) > 8);
+  assert.ok(lit.length, 'some panels are lit');
+  for (const p of lit) {
+    const spread = Math.max(p.r, p.g, p.b) - Math.min(p.r, p.g, p.b);
+    assert.ok(spread < 3, `lit panel should be gray (r=${p.r|0} g=${p.g|0} b=${p.b|0})`);
+  }
+});
+
 test('setRotate floors a tiny numeric interval (rotate-storm DoS guard)', () => {
   const { renderer } = make({ minSeconds: 8 });
   const result = renderer.setRotate(0.001);

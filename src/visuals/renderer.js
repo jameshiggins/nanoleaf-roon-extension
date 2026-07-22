@@ -360,7 +360,7 @@ class VisualRenderer extends EventEmitter {
   _apply(name, palette, verb) {
     this.currentName = name;
     this.currentPalette = palette;
-    this.visual = createVisual(name, this.layout, palette, this.rng);
+    this.visual = createVisual(name, this.layout, palette, this.rng, { flashStrength: this.config.flashStrength });
     this.lastRotateAt = this.now();
     const label = `${name} · ${palette.name}`;
     log.info(`${verb} ${label}`);
