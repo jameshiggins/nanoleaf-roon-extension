@@ -17,8 +17,8 @@
 const BINS = 36;           // hue histogram resolution (10° per bin)
 const MIN_SAT = 0.18;      // below this a pixel is "gray" — no reliable hue
 const MIN_VAL = 0.12;      // below this a pixel is "black" — no reliable hue
-const HUE_APART = 25;      // swatches must sit this many degrees apart
-const MAX_SWATCHES = 6;    // most distinct colors we pull from one cover
+const HUE_APART = 18;      // swatches must sit this many degrees apart (was 25)
+const MAX_SWATCHES = 10;   // most distinct colors we pull from one cover (was 6)
 
 /** RGB (0-255) → { h: 0-360, s: 0-1, v: 0-1 }. */
 function rgbToHsv(r, g, b) {
@@ -52,6 +52,8 @@ function hueDist(a, b) {
  * @returns {{ name, base, accent, hit, sat, val }|null}
  */
 function extractPalette(rgba, width, height, opts = {}) {
+  const maxSwatches = Math.max(3, Math.round(opts.maxSwatches ?? MAX_SWATCHES));
+  const hueApart = opts.hueApart ?? HUE_APART;
   const bins = new Float64Array(BINS);   // accumulated vibrancy weight per hue bin
   const binHueSum = new Float64Array(BINS); // weighted hue sum, for a precise center
   let weighted = 0;
@@ -84,8 +86,8 @@ function extractPalette(rgba, width, height, opts = {}) {
   // paint the whole cover, not just three roles.
   const chosen = [base];
   for (const p of peaks.slice(1)) {
-    if (chosen.every((h) => hueDist(h, p.hue) >= HUE_APART)) chosen.push(p.hue);
-    if (chosen.length === MAX_SWATCHES) break;
+    if (chosen.every((h) => hueDist(h, p.hue) >= hueApart)) chosen.push(p.hue);
+    if (chosen.length === maxSwatches) break;
   }
   // Guarantee at least three for the base/accent/hit roles + contrast on a
   // monochrome cover.
@@ -98,7 +100,7 @@ function extractPalette(rgba, width, height, opts = {}) {
     base: chosen[0],
     accent: chosen[1],
     hit: chosen[2],
-    swatches: chosen,   // 3–6 dominant hues, most-prominent first
+    swatches: chosen,   // 3–maxSwatches dominant hues, most-prominent first
     sat: opts.sat != null ? opts.sat : 0.9,
     val: opts.val != null ? opts.val : 1.0,
   };

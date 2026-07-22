@@ -31,6 +31,7 @@ async function fetchAlbumPalette(roon, imageKey, opts = {}) {
     name: 'Album',
     sat: opts.albumSat,
     val: opts.albumVal,
+    maxSwatches: opts.albumMaxColors,
   });
 }
 

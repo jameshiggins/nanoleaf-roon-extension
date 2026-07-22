@@ -14,6 +14,19 @@ function image(w, h, colorAt) {
   return buf;
 }
 
+/** HSV(0-360,0-1,0-1) → [r,g,b] 0-255, for building synthetic test covers. */
+function hsvToRgb(h, s, v) {
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  let rgb;
+  if (h < 60) rgb = [c, x, 0];
+  else if (h < 120) rgb = [x, c, 0];
+  else if (h < 180) rgb = [0, c, x];
+  else if (h < 240) rgb = [0, x, c];
+  else if (h < 300) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  return rgb.map((u) => Math.round((u + m) * 255));
+}
+
 const hueOf = (pal) => pal.base;
 
 test('rgbToHsv: primaries', () => {
@@ -59,19 +72,34 @@ test('monochrome (single hue) cover still fans out to 3 distinct hues', () => {
   ]).size, 3, 'three distinct hues so scenes keep contrast');
 });
 
-test('extracts up to 6 distinct swatches from a rich, multi-color cover', () => {
+test('extracts the distinct swatches from a rich, multi-color cover', () => {
   const bands = [[220, 20, 20], [20, 200, 40], [30, 110, 240], [240, 220, 20], [200, 20, 200], [20, 220, 220]];
   const buf = image(24, 24, (x) => bands[Math.min(5, Math.floor(x / 4))]);
   const pal = extractPalette(buf, 24, 24);
-  assert.ok(pal.swatches.length >= 5 && pal.swatches.length <= 6, `~6 swatches, got ${pal.swatches.length}`);
+  assert.ok(pal.swatches.length >= 5 && pal.swatches.length <= 6, `all 6 cover hues, got ${pal.swatches.length}`);
   for (let i = 0; i < pal.swatches.length; i++) {
     for (let j = i + 1; j < pal.swatches.length; j++) {
-      assert.ok(hueDist(pal.swatches[i], pal.swatches[j]) >= 20, `swatches ${i},${j} distinct`);
+      assert.ok(hueDist(pal.swatches[i], pal.swatches[j]) >= 18, `swatches ${i},${j} distinct`);
     }
   }
   assert.equal(pal.base, pal.swatches[0]);
   assert.equal(pal.accent, pal.swatches[1]);
   assert.equal(pal.hit, pal.swatches[2]);
+});
+
+test('pulls more than 6 hues from a very colorful cover (raised cap)', () => {
+  // 9 well-separated hues (every 40°) — the old cap of 6 would have clipped this.
+  const bands = Array.from({ length: 9 }, (_, k) => hsvToRgb(k * 40, 0.9, 0.9));
+  const buf = image(36, 36, (x) => bands[Math.min(8, Math.floor(x / 4))]);
+  const pal = extractPalette(buf, 36, 36); // default maxSwatches now 10
+  assert.ok(pal.swatches.length >= 8, `should pull most of the 9 hues, got ${pal.swatches.length}`);
+});
+
+test('maxSwatches opt caps the count', () => {
+  const bands = Array.from({ length: 9 }, (_, k) => hsvToRgb(k * 40, 0.9, 0.9));
+  const buf = image(36, 36, (x) => bands[Math.min(8, Math.floor(x / 4))]);
+  const pal = extractPalette(buf, 36, 36, { maxSwatches: 4 });
+  assert.equal(pal.swatches.length, 4, `capped to 4, got ${pal.swatches.length}`);
 });
 
 test('monochrome cover still yields 3 swatches (fanned) for the 3-color roles', () => {
