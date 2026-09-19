@@ -28,8 +28,11 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String PREFS = "nlr";
     private static final String KEY_URL = "serverUrl";
+    /** The extension's companion-app URL on this LAN (long-press MENU to change). */
+    private static final String DEFAULT_URL = "http://192.168.50.51:8787";
 
     private WebView web;
+    private boolean promptShowing = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -45,17 +48,27 @@ public class MainActivity extends AppCompatActivity {
         s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        web.setWebViewClient(new WebViewClient());
+        // The web app switches to its 10-foot layout + D-pad focus nav on this token.
+        s.setUserAgentString(s.getUserAgentString() + " NanoleafRoonTV/1");
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, android.webkit.WebResourceRequest request,
+                                        android.webkit.WebResourceError error) {
+                // Only a failed main-frame load means the server is wrong/down —
+                // subresource hiccups (SSE reconnects) must not open the prompt.
+                if (request.isForMainFrame()) promptForUrl();
+            }
+        });
         web.setBackgroundColor(0xFF000000);
         web.setFocusable(true);
         web.requestFocus();
 
         String url = prefs().getString(KEY_URL, null);
         if (url == null || url.isEmpty()) {
-            promptForUrl();
-        } else {
-            web.loadUrl(url);
+            url = DEFAULT_URL; // first run: go straight to the known extension address
+            prefs().edit().putString(KEY_URL, url).apply();
         }
+        web.loadUrl(url);
     }
 
     private SharedPreferences prefs() {
@@ -63,10 +76,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void promptForUrl() {
+        if (promptShowing) return;
+        promptShowing = true;
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
-        input.setHint("http://192.168.1.10:8787");
-        String existing = prefs().getString(KEY_URL, "http://192.168.1.10:8787");
+        input.setHint(DEFAULT_URL);
+        String existing = prefs().getString(KEY_URL, DEFAULT_URL);
         input.setText(existing);
         new AlertDialog.Builder(this)
                 .setTitle("Extension address")
@@ -74,6 +89,7 @@ public class MainActivity extends AppCompatActivity {
                 .setView(input)
                 .setCancelable(false)
                 .setPositiveButton("Connect", (d, w) -> {
+                    promptShowing = false;
                     String url = input.getText().toString().trim();
                     prefs().edit().putString(KEY_URL, url).apply();
                     web.loadUrl(url);
