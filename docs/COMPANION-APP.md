@@ -15,7 +15,8 @@ There are **two ways to run it**, sharing the exact same web app:
 
 1. **Web app** — served by the extension; open the URL on the Shield (browser or a URL shortcut).
    Nothing to build.
-2. **Native APK** — a thin Android TV WebView wrapper (in [`android/`](../android)) that installs
+2. **Native APK** — a thin Android TV WebView wrapper (its own repo,
+   [nanoleaf-roon-android](https://github.com/jameshiggins/nanoleaf-roon-android)) that installs
    into the Shield's app row and launches full-screen. Build it in Android Studio.
 
 ## 1. Enable the server
@@ -50,15 +51,16 @@ the controls. This is the fastest way to see it working.
 
 ## 2b. Install the native Android TV app on the Shield
 
-**You don't need to build anything** — GitHub Actions builds the APK on every change and
-publishes it to a release. Two ways to get it onto the Shield:
+**You don't need to build anything** — GitHub Actions in the
+[nanoleaf-roon-android](https://github.com/jameshiggins/nanoleaf-roon-android) repo builds the APK
+on every change and publishes it to a release. Two ways to get it onto the Shield:
 
 ### Easiest: the Downloader app (no PC)
 
 1. On the Shield, install **Downloader** (by AFTVnews) from the Play Store, and in
    **Settings → Device Preferences → Security → Install unknown apps**, allow Downloader.
 2. In Downloader, open this URL:
-   **`https://github.com/jameshiggins/nanoleaf-roon-extension/releases/download/latest/nanoleaf-roon-visualizer.apk`**
+   **`https://github.com/jameshiggins/nanoleaf-roon-android/releases/download/latest/nanoleaf-roon-visualizer.apk`**
 3. It downloads and offers to install. Open it; on first launch enter the extension URL the
    extension logged (e.g. `http://192.168.50.42:8787`). Long-press **Menu** to change it later.
 
@@ -67,7 +69,7 @@ The app then appears in the Shield's **Apps** row.
 ### From a PC over adb
 
 Grab the APK from the
-[latest release](https://github.com/jameshiggins/nanoleaf-roon-extension/releases/tag/latest)
+[latest release](https://github.com/jameshiggins/nanoleaf-roon-android/releases/tag/latest)
 (or from a run's **Artifacts** under the **Android APK** workflow), then:
 
 ```bash
@@ -77,12 +79,13 @@ adb install nanoleaf-roon-visualizer.apk
 
 ### Build it yourself (optional)
 
-It's a standard Android Studio project (one small Java activity around a WebView). Open the
-`android/` folder in Android Studio → **Build → Build APK(s)**, or `gradle -p android
-assembleDebug` with the Android SDK installed.
+It's a standard Android Studio project (one small Java activity around a WebView). Clone
+[nanoleaf-roon-android](https://github.com/jameshiggins/nanoleaf-roon-android), open it in
+Android Studio → **Build → Build APK(s)**, or run `gradlew assembleDebug` with the Android SDK
+installed.
 
 The app declares `LEANBACK_LAUNCHER`, so it shows up in the Shield's **Apps** row with a banner
-(replace `app/src/main/res/drawable/banner.xml` with real 320×180 art when you like).
+(`app/src/main/res/drawable-nodpi/banner.png`, 320×180).
 
 ### Remote controls
 

@@ -53,7 +53,7 @@ for the process lifetime.
 | `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle`/`zones` (no Roon dependency) | — |
 | `src/control/server.js` | Companion-app HTTP + SSE server: serves the web app, `GET /api/state`, `/api/catalogue`, `POST /api/command`, live `GET /events`; `applyCommand` pure command applier | http (built-in) |
 | `src/control/webapp/index.html` | Self-contained TV web app: canvas panel-mirror, now-playing, D-pad controls over the API | — |
-| `android/` | Android TV WebView wrapper (Java + Gradle) that loads the web app; ships as source (no SDK here to build) | Android SDK |
+| *(separate repo)* [`nanoleaf-roon-android`](https://github.com/jameshiggins/nanoleaf-roon-android) | Android TV WebView wrapper (Java + Gradle) that loads the web app; lives in the sibling folder `..\nanoleaf-roon-android\` | Android SDK |
 
 ## Design rules
 
