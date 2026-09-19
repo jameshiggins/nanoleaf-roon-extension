@@ -172,8 +172,32 @@ async function runService(configFile) {
       if (!renderer) return;
       feed.sample(roonPlaying, renderer.lastFeatures.energy > cfg.visuals.silenceFloor, Date.now());
     }, 5000).unref();
+    // Shield auto-launch: its own watcher because it follows one room (shield.zone), not
+    // whatever roon.zone the wall follows. A 'playing' out of a Subscribed snapshot is us
+    // (re)connecting mid-song, not someone pressing play — never launch on that.
+    let shieldWatcher = null;
+    let inSnapshot = false;
+    if (cfg.shield.enabled) {
+      const { ShieldLauncher } = require('./shield/launcher');
+      const launcher = new ShieldLauncher({
+        adb: cfg.shield.adb,
+        adbKey: cfg.shield.adbKey,
+        target: cfg.shield.target,
+        component: cfg.shield.component,
+        cooldownMs: cfg.shield.cooldownMinutes * 60 * 1000,
+      });
+      shieldWatcher = new TrackWatcher({ zone: cfg.shield.zone });
+      shieldWatcher.on('playing', () => { if (!inSnapshot) launcher.onFirstPlay(); });
+      log.info(`shield auto-launch on: ${cfg.shield.target}, zone "${cfg.shield.zone || '(any)'}"`);
+    }
     roon = new RoonExtension({
-      onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
+      onZoneEvent: (response, msg) => {
+        watcher.handleEvent(response, msg);
+        if (shieldWatcher) {
+          inSnapshot = response === 'Subscribed';
+          try { shieldWatcher.handleEvent(response, msg); } finally { inSnapshot = false; }
+        }
+      },
       onOutputEvent: (response, msg) => feed.handleOutputs(response, msg),
       wantImages: true, // always request the image service so albumColors can toggle live
     });

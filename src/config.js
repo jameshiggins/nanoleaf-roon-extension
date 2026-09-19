@@ -61,6 +61,16 @@ const DEFAULTS = {
     host: '127.0.0.1',   // localhost only by default; set to 0.0.0.0 to expose on the LAN
     frameHz: 20,         // telemetry frame rate pushed to the app
   },
+  shield: {
+    enabled: false,      // open the Roon Shield app's Now Playing over adb when music starts
+    zone: '',            // Roon zone that triggers it (case-insensitive substring); '' = any
+    target: '',          // the Shield's wireless-adb address, e.g. "192.168.50.195:5555"
+    adb: 'adb',          // path to adb.exe
+    adbKey: '',          // adb private key the Shield already trusts (the service runs as SYSTEM,
+                         // whose own key it doesn't), e.g. C:\Users\<you>\.android\adbkey
+    component: 'com.roonshield/.MainActivity',
+    cooldownMinutes: 30, // never launch more often than this
+  },
 };
 
 class ConfigError extends Error {}
@@ -170,6 +180,14 @@ function validate(cfg, errors) {
   num(cfg.control.port, 'control.port', 1, 65535);
   str(cfg.control.host, 'control.host');
   num(cfg.control.frameHz, 'control.frameHz', 1, 60);
+
+  if (typeof cfg.shield.enabled !== 'boolean') errors.push('shield.enabled: expected true or false');
+  for (const key of ['zone', 'target', 'adb', 'adbKey', 'component']) str(cfg.shield[key], `shield.${key}`);
+  num(cfg.shield.cooldownMinutes, 'shield.cooldownMinutes', 0, 1440);
+  if (cfg.shield.enabled === true) {
+    if (cfg.roon.enabled !== true) errors.push('shield.enabled requires roon.enabled: true (play events come from Roon)');
+    if (!cfg.shield.target) errors.push('shield.enabled requires shield.target (the Shield\'s adb address)');
+  }
 }
 
 /**

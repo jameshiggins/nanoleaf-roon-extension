@@ -51,5 +51,13 @@
     "port": 8787,
     "host": "127.0.0.1",
     "frameHz": 20
+  },
+  "shield": {
+    "enabled": false,
+    "zone": "Living Room",
+    "target": "192.168.1.50:5555",
+    "adb": "C:\\Android\\platform-tools\\adb.exe",
+    "adbKey": "C:\\Users\\you\\.android\\adbkey",
+    "cooldownMinutes": 30
   }
 }
