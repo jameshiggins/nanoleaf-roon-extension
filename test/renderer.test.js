@@ -87,6 +87,48 @@ test('renders frames from loud audio, all panels addressed', () => {
   assert.ok(bright > 10, `loud audio should light panels, got ${bright}`);
 });
 
+test('rotateLayout lever re-rotates the layout and rebuilds the live visual', () => {
+  const source = new EventEmitter();
+  const streamer = fakeStreamer();
+  const raw = [
+    { panelId: 1, x: 0, y: 0 },
+    { panelId: 2, x: 100, y: 0 },
+    { panelId: 3, x: 200, y: 0 },
+  ];
+  const renderer = new VisualRenderer({
+    source, streamer,
+    rawLayout: raw, baseOrientation: 0,
+    config: { ...BASE_CFG, rotateLayout: 0 },
+    fps: 30, rng: () => 0.42,
+  });
+  assert.ok(renderer.layout.every((p) => p.ny === 0), 'starts as a horizontal row');
+  renderer.rotate(true);
+  const before = renderer.visual;
+
+  const res = renderer.setOption('rotateLayout', 90);
+  assert.ok(res.ok, 'rotateLayout is a settable lever');
+  const nxs = renderer.layout.map((p) => p.nx);
+  assert.ok(Math.max(...nxs) - Math.min(...nxs) < 1e-9, 'row became a column');
+  assert.notEqual(renderer.visual, before, 'live visual rebuilt on the new layout');
+  renderer.stop();
+});
+
+test('brightness lever dims streamed frames proportionally', () => {
+  const { renderer, streamer } = make();
+  renderer.rotate(true);
+  for (let i = 0; i < 10; i++) { renderer.features.onChunk(loudChunk()); renderer.renderFrame(); }
+  const fullMax = Math.max(...streamer.frames.at(-1).map((p) => Math.max(p.r, p.g, p.b)));
+  assert.ok(fullMax > 10, 'panels lit at full brightness');
+
+  const res = renderer.setOption('brightness', 0.25);
+  assert.ok(res.ok, 'brightness is a settable lever');
+  renderer.features.onChunk(loudChunk());
+  const dimmed = renderer.renderFrame();
+  const dimMax = Math.max(...dimmed.map((p) => Math.max(p.r, p.g, p.b)));
+  assert.ok(dimMax < fullMax * 0.45, `25% brightness should dim well below full (${fullMax} → ${dimMax})`);
+  assert.ok(dimMax > 1, 'dimmed, not black');
+});
+
 test('silence gate fades panels toward black', () => {
   const { renderer, streamer } = make();
   renderer.rotate(true);
@@ -215,6 +257,39 @@ test('setLivePalette overrides the pin, rebuilds the visual, persists across rot
   assert.equal(renderer.currentPalette.name, 'Vintage Modern', 'clearing reverts to the pin');
 });
 
+test('albumMixEvery interleaves album turns with shuffled palettes', () => {
+  const { renderer } = make({ albumMixEvery: 3, include: ['wheel'] });
+  renderer.rotate(true);
+  renderer.setLivePalette({ name: 'Album', base: 200, accent: 40, hit: 300 });
+  assert.equal(renderer.currentPalette.name, 'Album', 'first album fetch applies immediately');
+  const seen = [];
+  for (let i = 0; i < 6; i++) { renderer.rotate(false); seen.push(renderer.currentPalette.name === 'Album'); }
+  assert.deepEqual(seen, [true, false, false, true, false, false], 'album palette every 3rd rotation');
+});
+
+test('albumMixEvery with rotate off: each track change consumes a mix turn', () => {
+  const { renderer } = make({ albumMixEvery: 3, rotate: 'off', include: ['wheel'] });
+  renderer.rotate(true);
+  const seen = [];
+  for (let i = 0; i < 6; i++) {
+    renderer.setLivePalette({ name: 'Album', base: 200, accent: 40, hit: 300 });
+    seen.push(renderer.currentPalette.name === 'Album');
+  }
+  assert.deepEqual(seen, [true, false, false, true, false, false], 'album palette every 3rd track');
+});
+
+test('palettePins: rotation shuffles among just the pinned set', () => {
+  const seq = (() => { let s = 0.2; return () => (s = (s * 7919 + 0.577) % 1); })();
+  const { renderer } = make({ include: ['wheel'] }, { rng: seq });
+  renderer.rotate(true);
+  const res = renderer.setOption('palettePins', ['Northern Lights', 'Blaze', 'no-such-palette']);
+  assert.equal(res.ok, true);
+  assert.deepEqual(renderer.config.palettePins, ['Northern Lights', 'Blaze'], 'unknown names dropped');
+  const seen = new Set();
+  for (let i = 0; i < 20; i++) { renderer.rotate(false); seen.add(renderer.currentPalette.name); }
+  assert.deepEqual([...seen].sort(), ['Blaze', 'Northern Lights'], 'only pinned palettes rotate');
+});
+
 test('clearLivePalette with no pin falls back to a generated palette, not dark', () => {
   const { renderer } = make({ include: ['wheel'] });
   renderer.rotate(true);
@@ -234,7 +309,8 @@ test('getState / getCatalogue expose current look and choices', () => {
   assert.equal(typeof s.palette, 'string');
   assert.equal(s.locked, false);
   const cat = renderer.getCatalogue();
-  assert.deepEqual(cat.visuals.map((v) => v.name).sort(), ['ripple', 'wheel']);
+  assert.deepEqual(cat.visuals.filter((v) => v.enabled).map((v) => v.name).sort(), ['ripple', 'wheel']);
+  assert.ok(cat.visuals.length > 2, 'disabled visuals are still listed');
   assert.ok(cat.palettes.length >= 1);
   assert.equal(cat.layout.length, 3);
 });

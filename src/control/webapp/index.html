@@ -2,204 +2,1067 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Nanoleaf Roon Visualizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#06070a" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<title>Nanoleaf Wall</title>
 <style>
-  :root { --bar-bg: rgba(12, 12, 16, 0.82); --focus: #7cf; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
-    font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; -webkit-font-smoothing: antialiased; }
-  #stage { position: fixed; inset: 0; display: block; }
-  #np { position: fixed; left: 4vw; bottom: 4vh; max-width: 60vw; text-shadow: 0 2px 12px #000;
-    transition: opacity .5s; pointer-events: none; }
-  #np .title { font-size: 3.2vw; font-weight: 700; line-height: 1.1; }
-  #np .artist { font-size: 2vw; opacity: .85; margin-top: .4vh; }
-  #np .look { font-size: 1.4vw; opacity: .6; margin-top: 1.2vh; letter-spacing: .04em; text-transform: uppercase; }
-  #np.hidden { opacity: 0; }
-  #conn { position: fixed; top: 3vh; right: 3vw; font-size: 1.2vw; opacity: .0; transition: opacity .3s;
-    background: rgba(200,40,40,.85); padding: .5vh 1.4vw; border-radius: 999px; }
-  #conn.show { opacity: 1; }
-  #bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 1vw; justify-content: center;
-    padding: 2.4vh 2vw; background: linear-gradient(to top, var(--bar-bg), transparent);
-    transform: translateY(120%); transition: transform .35s ease; }
-  #bar.show { transform: translateY(0); }
-  .btn { display: flex; flex-direction: column; align-items: center; gap: .6vh; min-width: 12vw;
-    padding: 1.6vh 1vw; border-radius: 1.4vh; background: rgba(255,255,255,.08);
-    border: 3px solid transparent; font-size: 1.5vw; }
-  .btn .ico { font-size: 3vw; line-height: 1; }
-  .btn.focus { border-color: var(--focus); background: rgba(124,204,255,.16); box-shadow: 0 0 3vh rgba(124,204,255,.35); }
-  #hint { position: fixed; top: 3vh; left: 50%; transform: translateX(-50%); font-size: 1.2vw;
-    opacity: .0; transition: opacity .4s; background: rgba(0,0,0,.5); padding: .6vh 1.6vw; border-radius: 999px; }
-  #hint.show { opacity: .8; }
+  :root {
+    --accent: 124, 204, 255;          /* live album color, updated from frames */
+    --bg: #06070a;
+    --card: rgba(255,255,255,.055);
+    --card-brd: rgba(255,255,255,.09);
+    --ink: #f4f6fb;
+    --ink-dim: rgba(244,246,251,.62);
+    --ink-faint: rgba(244,246,251,.38);
+    --ok: #46d17a;
+    --bad: #e0574f;
+    --radius: 18px;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  body { overscroll-behavior-y: none; overflow-x: hidden; }
+
+  /* reactive ambient background — the panels mirrored as soft bokeh */
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; opacity: .5; }
+  #scrim { position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    background: radial-gradient(120% 80% at 50% 0%, transparent 30%, rgba(4,5,8,.55) 78%, var(--bg) 100%); }
+
+  /* scroll container */
+  #app { position: relative; z-index: 2; min-height: 100%; max-width: 620px; margin: 0 auto;
+    padding: calc(var(--safe-t) + 14px)
+             calc(env(safe-area-inset-right, 0px) + 16px)
+             calc(var(--safe-b) + 28px)
+             calc(env(safe-area-inset-left, 0px) + 16px);
+    display: flex; flex-direction: column; gap: 16px; }
+
+  /* ---- header: brand line + now-playing hero ---- */
+  #hdr { display: flex; flex-direction: column; gap: 14px; }
+  #topline { display: flex; align-items: center; gap: 10px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); flex: none;
+    box-shadow: 0 0 10px var(--ok); transition: background .3s, box-shadow .3s; }
+  #dot.off { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+  #brand { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  #status { margin-left: auto; font-size: 12px; color: var(--ink-faint); }
+
+  #hero { display: flex; gap: 14px; align-items: center; min-height: 76px; }
+  #art { position: relative; width: 76px; height: 76px; flex: none; border-radius: 16px; overflow: hidden;
+    background: linear-gradient(140deg, rgba(var(--accent), .35), rgba(var(--accent), .08));
+    box-shadow: 0 6px 24px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.10);
+    display: flex; align-items: center; justify-content: center; transition: background .5s; }
+  #art .ph { font-size: 28px; opacity: .8; }
+  #art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+  #art.has img { display: block; }
+  #art.has .ph { display: none; }
+  #np { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  #np .title { font-size: clamp(19px, 5.6vw, 26px); font-weight: 750; line-height: 1.12; letter-spacing: -.01em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  #np .artist { font-size: clamp(13px, 3.8vw, 16px); color: var(--ink-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #np .sub { font-size: 11.5px; color: var(--ink-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #look { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; margin-top: 2px;
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: rgb(var(--accent));
+    background: rgba(var(--accent), .12); border: 1px solid rgba(var(--accent), .28);
+    padding: 4px 10px; border-radius: 999px; font-weight: 650; transition: color .4s, background .4s, border-color .4s;
+    max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* energy meter */
+  #meter { display: flex; align-items: flex-end; gap: 5px; height: 26px; }
+  #meter .lvl { flex: 1; border-radius: 4px 4px 2px 2px; background: rgba(var(--accent), .8);
+    height: 8%; transition: height .09s linear, background .4s; min-height: 3px; opacity: .9; }
+  #meter .lvl.e { background: rgb(var(--accent)); }
+
+  /* ---- live wall preview ---- */
+  #wallCard { padding: 12px 15px 10px; }
+  #wall { display: block; width: 100%; height: 148px; border-radius: 12px; }
+  #wallBadge { display: inline-flex; align-items: center; gap: 6px; }
+  #wallBadge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); transition: background .3s, box-shadow .3s; }
+  #wallBadge.live { color: rgb(var(--accent)); }
+  #wallBadge.live::before { background: var(--ok); box-shadow: 0 0 8px rgba(70,209,122,.8); }
+
+  /* ---- cards ---- */
+  .card { background: var(--card); border: 1px solid var(--card-brd); border-radius: var(--radius);
+    padding: 15px; backdrop-filter: blur(18px) saturate(1.3); -webkit-backdrop-filter: blur(18px) saturate(1.3); }
+  .card h2 { margin: 0 0 12px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 650;
+    display: flex; align-items: baseline; gap: 10px; }
+  .card h2 .h2hint { margin-left: auto; font-size: 10.5px; font-weight: 500; letter-spacing: .02em;
+    text-transform: none; color: var(--ink-faint); white-space: nowrap; }
+
+  /* preset / action buttons */
+  .row { display: flex; gap: 9px; }
+  .row.wrap { flex-wrap: wrap; }
+  .row.wrap .act { flex: 1 1 30%; }
+  .act { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+    padding: 13px 8px; border-radius: 14px; background: rgba(255,255,255,.06); border: 1px solid var(--card-brd);
+    color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; user-select: none;
+    transition: transform .08s, background .2s, border-color .2s; }
+  .act:active { transform: scale(.95); }
+  .act .ico { font-size: 22px; line-height: 1; }
+  .act.on { background: rgba(var(--accent), .18); border-color: rgba(var(--accent), .5); color: rgb(var(--accent)); }
+  .act.primary { background: rgba(var(--accent), .16); border-color: rgba(var(--accent), .4); }
+
+  /* horizontal chip strips */
+  .strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none;
+    scroll-snap-type: x proximity; margin: 0 -2px; padding-left: 2px; padding-right: 2px; }
+  .strip::-webkit-scrollbar { display: none; }
+  .chip { flex: none; scroll-snap-align: start; padding: 8px 12px; border-radius: 12px; cursor: pointer;
+    background: rgba(255,255,255,.055); border: 1px solid var(--card-brd); font-size: 13px; font-weight: 600;
+    white-space: nowrap; color: var(--ink-dim); transition: transform .08s, background .2s, border-color .2s, color .2s, opacity .2s;
+    display: flex; align-items: center; gap: 8px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .chip:active { transform: scale(.94); }
+  .chip.sel { background: rgba(var(--accent), .2); border-color: rgba(var(--accent), .55); color: var(--ink); }
+  .chip .desc { display: none; }
+  /* segmented mode pickers */
+  .seg { display: flex; gap: 3px; padding: 3px; border-radius: 12px; margin-bottom: 12px;
+    background: rgba(255,255,255,.06); border: 1px solid var(--card-brd); }
+  .seg .opt { flex: 1; min-width: 0; text-align: center; padding: 8px 4px; border-radius: 9px;
+    font-size: 12.5px; font-weight: 600; color: var(--ink-dim); cursor: pointer; user-select: none;
+    -webkit-user-select: none; transition: background .15s, color .15s; white-space: nowrap; overflow: hidden; }
+  .seg .opt.on { background: rgba(var(--accent), .22); color: var(--ink); }
+  .h2hint.btn-ish { cursor: pointer; color: rgb(var(--accent)); }
+  .h2hint.btn-ish:active { opacity: .6; }
+
+  /* palette grid: cards with true swatch bars */
+  .subhead { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+    font-weight: 650; margin: 2px 0 9px; }
+  .palgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-bottom: 4px; }
+  .pal { min-width: 0; border-radius: 13px; padding: 6px 6px 7px; cursor: pointer; user-select: none; -webkit-user-select: none;
+    background: rgba(255,255,255,.05); border: 1.5px solid var(--card-brd);
+    transition: transform .08s, border-color .2s, background .2s; }
+  .pal:active { transform: scale(.94); }
+  .pal .bar { height: 30px; border-radius: 9px; margin-bottom: 6px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+  .pal .nm { font-size: 11px; font-weight: 600; color: var(--ink-dim); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; text-align: center; }
+  .pal.sel { border-color: rgb(var(--accent)); background: rgba(var(--accent), .14); }
+  .pal.sel .nm { color: var(--ink); }
+  #genWrap > summary { list-style: none; cursor: pointer; margin: 10px 0 0; display: flex; align-items: center; gap: 6px; }
+  #genWrap > summary::-webkit-details-marker { display: none; }
+  #genWrap > summary .chev { transition: transform .2s; margin-left: auto; }
+  #genWrap[open] > summary .chev { transform: rotate(180deg); }
+  #genWrap[open] > summary { margin-bottom: 9px; }
+
+  /* scene chips: on/off membership + playing highlight */
+  .chip.scene::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--ok); box-shadow: 0 0 6px rgba(70,209,122,.7); transition: background .2s, box-shadow .2s; }
+  .chip.scene.off { opacity: .38; }
+  .chip.scene.off::before { background: rgba(255,255,255,.25); box-shadow: none; }
+  .chip.scene.playing { background: rgba(var(--accent), .22); border-color: rgba(var(--accent), .6); color: var(--ink); }
+  .chip.scene.holding { transform: scale(1.06); border-color: rgb(var(--accent)); }
+
+  /* sliders */
+  .slider { margin: 3px 0 16px; }
+  .slider:last-child { margin-bottom: 3px; }
+  .slabel { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9px; font-size: 14px; }
+  .slabel .k { font-weight: 600; }
+  .slabel .v { font-variant-numeric: tabular-nums; color: rgb(var(--accent)); font-weight: 650; font-size: 13px; transition: color .4s; }
+  .slabel .hint { color: var(--ink-faint); font-size: 11px; font-weight: 500; margin-left: 6px; }
+  /* pan-y: a vertical swipe over a slider scrolls the page instead of grabbing the thumb */
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 30px; background: transparent; margin: 0; cursor: pointer; touch-action: pan-y; }
+  input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 999px;
+    background: linear-gradient(90deg, rgba(var(--accent), .9) var(--fill, 40%), rgba(255,255,255,.11) var(--fill, 40%)); }
+  input[type=range]::-moz-range-track { height: 8px; border-radius: 999px; background: rgba(255,255,255,.11); }
+  input[type=range]::-moz-range-progress { height: 8px; border-radius: 999px; background: rgba(var(--accent), .9); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 24px; height: 24px; margin-top: -8px;
+    border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.1); }
+  input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border: none; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+
+  details.card > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 650; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary .chev { transition: transform .2s; }
+  details.card[open] > summary .chev { transform: rotate(180deg); }
+  details.card[open] > summary { margin-bottom: 14px; }
+
+  .foot { text-align: center; color: var(--ink-faint); font-size: 11px; letter-spacing: .03em; }
+
+  /* toast */
+  #toast { position: fixed; left: 50%; bottom: calc(var(--safe-b) + 22px); transform: translate(-50%, 18px);
+    z-index: 10; background: rgba(20,23,32,.92); border: 1px solid rgba(255,255,255,.14); color: var(--ink);
+    font-size: 13px; font-weight: 600; padding: 10px 16px; border-radius: 999px; pointer-events: none;
+    opacity: 0; transition: opacity .22s, transform .22s; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+    max-width: 86vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---- TV mode (Shield wrapper / 10-foot UI on the living-room LG) ----
+     landscape two-column: hero + wall stay pinned left, controls scroll right;
+     larger type, TV-safe margins, and a D-pad focus ring driven by __tvKey. */
+  /* TV-safe margins: real living-room panels overscan ~5%, so pad in viewport
+     units (esp. the bottom) or the last card sits under the clipped edge and
+     reads as "won't scroll all the way down". scroll-padding keeps D-pad
+     scrollIntoView from parking a focused control against the cut edge too. */
+  body.tv { scroll-padding: 6vh 0 9vh; }
+  body.tv #app { max-width: none; flex-direction: row; align-items: flex-start; gap: 22px;
+    padding: max(30px, 5vh) max(46px, 5vw) max(64px, 9vh); }
+  body.tv #tvLeft { flex: 0 0 35%; max-width: 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px;
+    position: sticky; top: max(30px, 5vh); }
+  /* guarantee the last control can always clear the overscan band when scrolled */
+  body.tv #tvRight::after { content: ""; display: block; height: 4vh; }
+  body.tv #tvRight { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  body.tv #art { width: 128px; height: 128px; border-radius: 22px; }
+  body.tv #art .ph { font-size: 44px; }
+  body.tv #np { gap: 5px; }
+  body.tv #np .title { font-size: 28px; }
+  body.tv #np .artist { font-size: 17px; }
+  body.tv #np .sub { font-size: 13px; }
+  body.tv #brand, body.tv #status { font-size: 13px; }
+  body.tv #meter { height: 34px; }
+  body.tv .card h2 { font-size: 13px; }
+  body.tv .card h2 .h2hint { font-size: 12px; }
+  body.tv .act { font-size: 15px; padding: 15px 10px; }
+  body.tv .act .ico { font-size: 25px; }
+  body.tv .chip { font-size: 15px; padding: 10px 15px; }
+  body.tv .strip { flex-wrap: wrap; overflow-x: visible; }   /* show every scene — D-pad grids beat scrolling */
+  body.tv .seg .opt { font-size: 14px; padding: 10px 6px; }
+  body.tv .palgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  body.tv .pal .bar { height: 34px; }
+  body.tv .pal .nm { font-size: 12px; }
+  body.tv .slabel { font-size: 16px; }
+  body.tv .slabel .v { font-size: 14px; }
+  body.tv .foot { display: none; }                            /* touch instructions mean nothing here */
+  body.tv .tvfocus { outline: 3px solid rgb(var(--accent)); outline-offset: 2px;
+    position: relative; z-index: 2; transform: scale(1.03); transition: transform .1s, outline-color .2s; }
+  body.tv .slider.tvfocus { outline-offset: 4px; border-radius: 10px; transform: none; }
 </style>
 </head>
 <body>
 <canvas id="stage"></canvas>
-<div id="np" class="hidden"><div class="title"></div><div class="artist"></div><div class="look"></div></div>
-<div id="conn">reconnecting…</div>
-<div id="hint">press ▲ for controls</div>
-<div id="bar">
-  <div class="btn" data-cmd="prev"><span class="ico">⏮</span><span>Prev look</span></div>
-  <div class="btn" data-cmd="next"><span class="ico">⏭</span><span>Next look</span></div>
-  <div class="btn" data-cmd="lock"><span class="ico">🔀</span><span>Auto</span></div>
-  <div class="btn" data-cmd="palette"><span class="ico">🎨</span><span>Palette</span></div>
-  <div class="btn" data-cmd="gain-"><span class="ico">🔉</span><span>Gain −</span></div>
-  <div class="btn" data-cmd="gain+"><span class="ico">🔊</span><span>Gain +</span></div>
+<div id="scrim"></div>
+
+<div id="app">
+  <header id="hdr">
+    <div id="topline">
+      <span id="dot"></span>
+      <span id="brand">Nanoleaf · Roon</span>
+      <span id="status">live</span>
+    </div>
+    <div id="hero">
+      <div id="art"><span class="ph">♪</span><img alt="" /></div>
+      <div id="np">
+        <div class="title">—</div>
+        <div class="artist"></div>
+        <div class="sub"></div>
+        <span id="look"></span>
+      </div>
+    </div>
+    <div id="meter"></div>
+  </header>
+
+  <section class="card" id="wallCard">
+    <h2>Wall <span class="h2hint" id="wallBadge">idle</span></h2>
+    <canvas id="wall"></canvas>
+    <div class="slider" data-key="rotateLayout" data-min="0" data-max="359" data-step="1" data-fmt="deg" data-refresh="layout" style="margin-top:10px">
+      <div class="slabel"><span class="k">Rotate <span class="hint">turn until it matches your wall</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Quick</h2>
+    <div class="row wrap">
+      <div class="act" data-preset="calm"><span class="ico">🌙</span><span>Calm</span></div>
+      <div class="act" data-preset="reactive"><span class="ico">⚡</span><span>Reactive</span></div>
+      <div class="act" data-act="shuffle"><span class="ico">🔀</span><span>Shuffle</span></div>
+      <div class="act" id="autoBtn" data-act="auto"><span class="ico">🔁</span><span>Auto</span></div>
+      <div class="act" id="resetBtn" data-act="reset"><span class="ico">💡</span><span>Reset panels</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Scenes <span class="h2hint">tap = on/off · hold = play</span></h2>
+    <div class="seg" id="rotSeg">
+      <div class="opt" data-rot="off">Pinned</div>
+      <div class="opt" data-rot="track">Per track</div>
+      <div class="opt" data-rot="timed">Timed</div>
+    </div>
+    <div class="slider" id="rotInt" style="display:none">
+      <div class="slabel"><span class="k">Change every</span><span class="v"></span></div>
+      <input type="range" min="10" max="600" step="5" value="60" />
+    </div>
+    <div class="strip" id="scenes"></div>
+  </section>
+
+  <section class="card">
+    <h2>Color <span class="h2hint btn-ish" id="diceBtn">🎲 random palette</span></h2>
+    <div class="seg" id="palSeg">
+      <div class="opt" data-pal="album">Album</div>
+      <div class="opt" data-pal="mix">Mix</div>
+      <div class="opt" data-pal="pinned">Pinned</div>
+      <div class="opt" data-pal="shuffle">Shuffle</div>
+    </div>
+    <div class="subhead">Presets</div>
+    <div class="palgrid" id="palPresets"></div>
+    <details id="genWrap">
+      <summary class="subhead more">All palettes <span id="genCount"></span> <span class="chev">▾</span></summary>
+      <div class="palgrid" id="palGen"></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>Levels</h2>
+    <div class="slider" data-key="brightness" data-min="0.05" data-max="1" data-step="0.05" data-fmt="pct">
+      <div class="slabel"><span class="k">Brightness <span class="hint">wall output level</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="gain" data-cmd="gain" data-min="0.25" data-max="8" data-step="0.05" data-fmt="x">
+      <div class="slabel"><span class="k">Gain <span class="hint">brightness / reactivity</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="flashStrength" data-min="0" data-max="1" data-step="0.05" data-fmt="pct">
+      <div class="slabel"><span class="k">Flash <span class="hint">beat strobe — 0 = none</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="attackMs" data-min="0" data-max="200" data-step="5" data-fmt="ms">
+      <div class="slabel"><span class="k">Punch <span class="hint">lower = snappier</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="releaseMs" data-min="40" data-max="1200" data-step="10" data-fmt="ms">
+      <div class="slabel"><span class="k">Smooth <span class="hint">higher = calmer fade</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+  </section>
+
+  <details class="card">
+    <summary>Advanced <span class="chev">▾</span></summary>
+    <div class="slider" data-key="fps" data-min="10" data-max="60" data-step="5" data-fmt="fps">
+      <div class="slabel"><span class="k">Panel FPS <span class="hint">higher = lower latency</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="silenceFloor" data-min="0" data-max="0.1" data-step="0.005" data-fmt="raw3">
+      <div class="slabel"><span class="k">Silence floor <span class="hint">gate for dark = off</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="onsetSensitivity" data-min="0.3" data-max="3" data-step="0.1" data-fmt="raw2">
+      <div class="slabel"><span class="k">Beat sensitivity</span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="albumMixEvery" data-min="0" data-max="10" data-step="1" data-fmt="nth">
+      <div class="slabel"><span class="k">Album turn <span class="hint">Mix mode: album palette cadence</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="albumSat" data-min="0" data-max="1" data-step="0.05" data-fmt="pct">
+      <div class="slabel"><span class="k">Album saturation</span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="minSeconds" data-min="2" data-max="60" data-step="1" data-fmt="sec">
+      <div class="slabel"><span class="k">Scene hold <span class="hint">auto-rotate dwell</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+  </details>
+
+  <div class="foot">tap a scene to include/exclude it · hold to play it now · Auto shuffles the enabled ones</div>
 </div>
+
+<div id="toast"></div>
 
 <script>
 "use strict";
 (function () {
-  var canvas = document.getElementById("stage");
-  var ctx = canvas.getContext("2d");
-  var npEl = document.getElementById("np");
-  var connEl = document.getElementById("conn");
-  var barEl = document.getElementById("bar");
-  var hintEl = document.getElementById("hint");
-  var buttons = Array.prototype.slice.call(barEl.querySelectorAll(".btn"));
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var canvas = $("#stage"), ctx = canvas.getContext("2d");
+  var wallCv = $("#wall"), wctx = wallCv.getContext("2d"), wallBadge = $("#wallBadge");
+  var dotEl = $("#dot"), statusEl = $("#status");
+  var titleEl = $("#np .title"), artistEl = $("#np .artist"), subEl = $("#np .sub"), lookEl = $("#look");
+  var artEl = $("#art"), artImg = $("#art img");
+  var meterEl = $("#meter"), scenesEl = $("#scenes");
+  var palPresets = $("#palPresets"), palGen = $("#palGen"), genCount = $("#genCount");
+  var autoBtn = $("#autoBtn"), rotSeg = $("#rotSeg"), palSeg = $("#palSeg"), diceBtn = $("#diceBtn");
+  var rotInt = $("#rotInt"), rotInput = $("#rotInt input"), rotVal = $("#rotInt .v");
+  var toastEl = $("#toast");
 
-  var state = { visual: null, palette: null, gain: 1, rotate: "track", locked: false, nowPlaying: null };
-  var catalogue = { layout: [], visuals: [], palettes: [] };
-  var colors = [];      // latest per-panel [r,g,b]
-  var features = { energy: 0, bass: 0, onset: false };
-  var beat = 0;         // decaying beat pulse for bloom
-  var dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-
-  // ---- rendering ----
-  function resize() {
-    canvas.width = Math.floor(innerWidth * dpr);
-    canvas.height = Math.floor(innerHeight * dpr);
+  // ---------- TV mode boot (Shield wrapper tags its WebView UA; ?tv=1 for testing) ----------
+  var TV = /NanoleafRoonTV/.test(navigator.userAgent) || /[?&]tv=1/.test(location.search);
+  if (TV) {
+    document.body.classList.add("tv");
+    // restructure into two columns: hero + wall pinned left, everything else right
+    var tvLeft = document.createElement("div"); tvLeft.id = "tvLeft";
+    var tvRight = document.createElement("div"); tvRight.id = "tvRight";
+    var appEl = $("#app");
+    tvLeft.appendChild($("#hdr"));
+    tvLeft.appendChild($("#wallCard"));
+    while (appEl.firstChild) tvRight.appendChild(appEl.firstChild);
+    appEl.appendChild(tvLeft); appEl.appendChild(tvRight);
+    // remote language, not touch language
+    var scenesHint = document.querySelector("#scenes")
+      && document.querySelector("#scenes").closest(".card").querySelector(".h2hint");
+    if (scenesHint) scenesHint.textContent = "OK = play · ⏭ = shuffle";
   }
-  window.addEventListener("resize", resize);
-  resize();
 
+  var state = { visual: null, palette: null, gain: 1.5, rotate: "track", locked: false, nowPlaying: null, acquired: false, panels: 0 };
+  var options = {};                 // live lever values from /api/config
+  var catalogue = { layout: [], visuals: [], palettes: [] };
+  var colors = [], features = { energy: 0, bass: 0, mid: 0, treble: 0, onset: false };
+  var beat = 0, accent = [124, 204, 255];
+  var dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
+
+  // ---------- little niceties ----------
+  function buzz(ms) { if (navigator.vibrate) try { navigator.vibrate(ms || 8); } catch (e) {} }
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 1700);
+  }
+
+  // segmented bar of a palette's true colors ([[r,g,b], ...] from the catalogue)
+  function paletteBar(colors) {
+    if (!colors || !colors.length) return "rgba(255,255,255,.1)";
+    var n = colors.length, stops = [];
+    for (var i = 0; i < n; i++) {
+      var c = "rgb(" + colors[i][0] + "," + colors[i][1] + "," + colors[i][2] + ")";
+      stops.push(c + " " + (i / n * 100) + "% " + ((i + 1) / n * 100) + "%");
+    }
+    return "linear-gradient(90deg," + stops.join(",") + ")";
+  }
+
+  // ---------- reactive background + live wall preview ----------
+  function resize() {
+    canvas.width = Math.floor(innerWidth * dpr); canvas.height = Math.floor(innerHeight * dpr);
+    sizeWall();
+  }
+  addEventListener("resize", resize);
+
+  // ---- realistic wall preview: true panel shapes at true scale ----
+  var wallGeom = null;
+  function panelRadiusMM(shape, side) {
+    // circumradius of each panel shape, in the layout's own millimeters
+    if (shape === 7 || shape === 12) return side;              // hexagons
+    if (shape === 2 || shape === 3 || shape === 4) return side / 1.41421; // squares
+    return side / 1.73205;                                     // triangles (0, 8, 9) + default
+  }
+  function wallMM() {
+    var l = catalogue.layout;
+    if (!l.length || l[0].mx == null) return null; // old server: no mm data
+    var w = 0, h = 0;
+    for (var i = 0; i < l.length; i++) { if (l[i].mx > w) w = l[i].mx; if (l[i].my > h) h = l[i].my; }
+    return { w: w, h: h };
+  }
+  function sizeWall() {
+    // give the canvas the wall's real aspect ratio (clamped), then refit
+    var mm = wallMM(), rect = wallCv.getBoundingClientRect();
+    var cssW = rect.width || 300, cssH = 148;
+    if (mm && mm.w > 10) {
+      var side = catalogue.panelSide || 150, m = side * 0.62;
+      cssH = Math.max(110, Math.min(300, cssW * ((mm.h + 2 * m) / (mm.w + 2 * m))));
+    }
+    wallCv.style.height = Math.round(cssH) + "px";
+    wallCv.width = Math.max(1, Math.floor(cssW * dpr));
+    wallCv.height = Math.max(1, Math.floor(cssH * dpr));
+    wallGeom = null;
+  }
+  function fitWall() {
+    var layout = catalogue.layout, W = wallCv.width, H = wallCv.height;
+    if (!layout.length || !W || !H) return null;
+    var pad = 8 * dpr;
+    var mm = wallMM();
+    if (mm) {
+      var side = catalogue.panelSide || 150;
+      var mR = side * 0.62; // margin so shapes + glow aren't clipped at the edges
+      var s = Math.min((W - pad * 2) / (mm.w + 2 * mR), (H - pad * 2) / (mm.h + 2 * mR));
+      return {
+        mm: true, s: s, side: side,
+        ox: (W - (mm.w + 2 * mR) * s) / 2 + mR * s,
+        oy: (H - (mm.h + 2 * mR) * s) / 2 + mR * s,
+        H: H,
+      };
+    }
+    // fallback for layouts without mm data: dots on the normalized grid
+    var bw = W - pad * 4, bh = H - pad * 4, s2 = Math.min(bw, bh);
+    var pts = layout.map(function (p) { return [pad * 2 + (bw - s2) / 2 + p.nx * s2, pad * 2 + (bh - s2) / 2 + (1 - p.ny) * s2]; });
+    var minD2 = Infinity;
+    for (var i = 0; i < pts.length; i++) for (var j = i + 1; j < pts.length; j++) {
+      var dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1];
+      if (dx * dx + dy * dy < minD2) minD2 = dx * dx + dy * dy;
+    }
+    return { mm: false, pts: pts, r: Math.min(pts.length > 1 ? Math.sqrt(minD2) * 0.46 : 20 * dpr, 22 * dpr) };
+  }
+  function shapePath(g, p) {
+    // trace the panel's true shape: mm-space vertices around the centroid,
+    // rotated by the panel's own orientation, y flipped into screen space
+    var shape = p.shape, side = g.side;
+    var n = (shape === 7 || shape === 12) ? 6 : (shape === 2 || shape === 3 || shape === 4) ? 4 : 3;
+    var R = panelRadiusMM(shape, side) * 0.94; // ~6% grout gap between panels
+    var base = (n === 3 ? 90 : n === 4 ? 45 : 0) + (p.o || 0);
+    wctx.beginPath();
+    for (var k = 0; k < n; k++) {
+      var a = (base + k * 360 / n) * Math.PI / 180;
+      var x = g.ox + (p.mx + R * Math.cos(a)) * g.s;
+      var y = g.H - (g.oy + (p.my + R * Math.sin(a)) * g.s);
+      if (k === 0) wctx.moveTo(x, y); else wctx.lineTo(x, y);
+    }
+    wctx.closePath();
+  }
+  function drawWall() {
+    var W = wallCv.width, H = wallCv.height;
+    if (!wallGeom) wallGeom = fitWall();
+    wctx.clearRect(0, 0, W, H);
+    var g = wallGeom;
+    if (!g) return;
+    var layout = catalogue.layout;
+    for (var k = 0; k < layout.length; k++) {
+      var c = colors[k], lit = c && Math.max(c[0], c[1], c[2]) > 5;
+      if (g.mm) {
+        var p = layout[k];
+        var cx = g.ox + p.mx * g.s, cy = g.H - (g.oy + p.my * g.s);
+        if (lit) {
+          var a = Math.min(1, Math.max(c[0], c[1], c[2]) / 255 * 0.85 + 0.15);
+          var rr = panelRadiusMM(p.shape, g.side) * g.s * 2.2;
+          var grad = wctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+          grad.addColorStop(0, "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a * 0.45) + ")");
+          grad.addColorStop(1, "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0)");
+          wctx.fillStyle = grad;
+          wctx.beginPath(); wctx.arc(cx, cy, rr, 0, 6.2832); wctx.fill();
+        }
+        shapePath(g, p);
+        if (lit) {
+          wctx.fillStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+          wctx.fill();
+        } else {
+          wctx.fillStyle = "rgba(255,255,255,.06)"; wctx.fill();
+          wctx.strokeStyle = "rgba(255,255,255,.13)"; wctx.lineWidth = 1 * dpr; wctx.stroke();
+        }
+      } else {
+        var x = g.pts[k][0], y = g.pts[k][1];
+        wctx.fillStyle = lit ? "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")" : "rgba(255,255,255,.07)";
+        wctx.beginPath(); wctx.arc(x, y, g.r, 0, 6.2832); wctx.fill();
+      }
+    }
+  }
   function draw() {
     var W = canvas.width, H = canvas.height;
-    beat *= 0.9;
-    // background wash from the average panel color
-    var ar = 0, ag = 0, ab = 0, n = colors.length || 1;
-    for (var i = 0; i < colors.length; i++) { ar += colors[i][0]; ag += colors[i][1]; ab += colors[i][2]; }
-    ar /= n; ag /= n; ab /= n;
+    beat *= 0.88;
     ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = "rgb(0,0,0)";
-    ctx.fillRect(0, 0, W, H);
-    var wash = 0.10 + 0.10 * features.energy;
-    ctx.fillStyle = "rgba(" + (ar|0) + "," + (ag|0) + "," + (ab|0) + "," + wash + ")";
-    ctx.fillRect(0, 0, W, H);
-
-    // panels as additive glowing blobs at their layout positions
+    ctx.fillStyle = "rgba(6,7,10,0.30)"; ctx.fillRect(0, 0, W, H); // motion trails
     ctx.globalCompositeOperation = "lighter";
-    var layout = catalogue.layout;
-    var pad = 0.12;
-    var radius = (Math.min(W, H) * (0.16 + 0.06 * beat)) / Math.max(1, Math.sqrt(layout.length) * 0.9);
+    var layout = catalogue.layout, pad = 0.14;
+    var radius = Math.min(W, H) * (0.24 + 0.08 * beat);
     for (var k = 0; k < layout.length; k++) {
       var c = colors[k]; if (!c) continue;
+      var mx = Math.max(c[0], c[1], c[2]); if (mx < 4) continue;
       var x = (pad + (1 - 2 * pad) * layout[k].nx) * W;
-      var y = (pad + (1 - 2 * pad) * (1 - layout[k].ny)) * H; // flip: layout ny 0 = bottom
-      var mx = Math.max(c[0], c[1], c[2]);
-      if (mx < 3) continue;
+      var y = (pad + (1 - 2 * pad) * (1 - layout[k].ny)) * H;
+      var a = Math.min(0.9, mx / 255 * 0.7 + 0.1);
       var g = ctx.createRadialGradient(x, y, 0, x, y, radius);
-      var a = Math.min(1, mx / 255 + 0.15);
       g.addColorStop(0, "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")");
-      g.addColorStop(0.5, "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a * 0.35) + ")");
+      g.addColorStop(0.55, "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a * 0.22) + ")");
       g.addColorStop(1, "rgba(" + c[0] + "," + c[1] + "," + c[2] + ",0)");
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, radius, 0, 6.2832); ctx.fill();
     }
+    drawWall();
     requestAnimationFrame(draw);
   }
+  resize();
   requestAnimationFrame(draw);
 
-  // ---- now-playing / status overlay ----
-  function renderState() {
+  // energy meter bars: bass, low-mid, mid, treble, ENERGY
+  var meterBars = [];
+  (function buildMeter() {
+    for (var i = 0; i < 5; i++) { var b = document.createElement("div"); b.className = "lvl" + (i === 4 ? " e" : ""); meterEl.appendChild(b); meterBars.push(b); }
+  })();
+  function paintMeter() {
+    var f = features;
+    var vals = [f.bass, (f.bass + f.mid) / 2, f.mid, f.treble, f.energy];
+    for (var i = 0; i < 5; i++) meterBars[i].style.height = Math.max(6, Math.min(100, vals[i] * 100)) + "%";
+    requestAnimationFrame(paintMeter);
+  }
+  requestAnimationFrame(paintMeter);
+
+  // accent color eased toward the brightest live panel
+  function tickAccent() {
+    var br = 0, best = null;
+    for (var i = 0; i < colors.length; i++) { var m = Math.max(colors[i][0], colors[i][1], colors[i][2]); if (m > br) { br = m; best = colors[i]; } }
+    if (best && br > 20) {
+      // lift toward a vivid, readable tint
+      var mx = Math.max(best[0], best[1], best[2]) || 1, boost = 210 / mx;
+      var tgt = [Math.min(255, best[0] * boost), Math.min(255, best[1] * boost), Math.min(255, best[2] * boost)];
+      for (var j = 0; j < 3; j++) accent[j] += (tgt[j] - accent[j]) * 0.05;
+      document.documentElement.style.setProperty("--accent", (accent[0] | 0) + "," + (accent[1] | 0) + "," + (accent[2] | 0));
+    }
+    setTimeout(tickAccent, 120);
+  }
+  tickAccent();
+
+  // ---------- commands ----------
+  var lastNetToast = 0;
+  function post(body) {
+    return fetch("/api/command", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) {
+        if (!r.ok && Date.now() - lastNetToast > 4000) { lastNetToast = Date.now(); toast("Command failed"); }
+        return r;
+      })
+      .catch(function () {
+        if (Date.now() - lastNetToast > 4000) { lastNetToast = Date.now(); toast("Wall unreachable"); }
+      });
+  }
+  function setLever(key, value) { return post({ cmd: "set", key: key, value: value }); }
+
+  // ---------- render UI from state ----------
+  var lastArtKey = null;
+  function renderArt() {
+    var np = state.nowPlaying, key = np && np.art ? np.art : null;
+    if (key === lastArtKey) return;
+    lastArtKey = key;
+    if (!key) { artEl.classList.remove("has"); artImg.removeAttribute("src"); return; }
+    var probe = new Image();
+    probe.onload = function () { artImg.src = probe.src; artEl.classList.add("has"); };
+    probe.onerror = function () { artEl.classList.remove("has"); };
+    probe.src = "/api/art?k=" + encodeURIComponent(key); // key busts the cache per track
+  }
+  function renderNP() {
     var np = state.nowPlaying;
-    var t = np && (np.title || "");
-    npEl.querySelector(".title").textContent = t || "";
-    npEl.querySelector(".artist").textContent = np ? (np.artist || "") : "";
-    var look = (state.visual || "") + (state.palette ? "  ·  " + state.palette : "") + (state.locked ? "  ·  locked" : "");
-    npEl.querySelector(".look").textContent = look;
-    npEl.classList.toggle("hidden", !t && !state.visual);
-    var lockBtn = barEl.querySelector('[data-cmd="lock"]');
-    lockBtn.querySelector("span:last-child").textContent = state.locked ? "Auto: off" : "Auto: on";
+    titleEl.textContent = (np && np.title) || "Nothing playing";
+    artistEl.textContent = (np && np.artist) || "";
+    var subBits = [];
+    if (np && np.album) subBits.push(np.album);
+    if (np && np.zoneName) subBits.push(np.zoneName);
+    subEl.textContent = subBits.join(" · ");
+    subEl.style.display = subBits.length ? "" : "none";
+    var look = (state.visual || "") + (state.palette ? " · " + state.palette : "");
+    lookEl.textContent = look; lookEl.style.display = look ? "inline-flex" : "none";
+    renderArt();
+    wallBadge.title = state.warning || "";
+    wallBadge.textContent = state.warning
+      ? "⚠ no audio from Roon"
+      : state.acquired
+        ? "live · " + (state.panels || catalogue.layout.length) + " panels"
+        : "idle — wall on scene";
+    wallBadge.classList.toggle("live", !!state.acquired);
+    autoBtn.classList.toggle("on", !state.locked);
+    autoBtn.querySelector("span:last-child").textContent = state.locked ? "Auto" : "Auto ✓";
+    highlightScene(); paintRotSeg(); paintPalSeg();
   }
 
-  // ---- SSE telemetry ----
-  var es;
+  // ---------- rotation mode (scenes) ----------
+  function rotMode() { return state.rotate === "off" ? "off" : (state.rotate === "track" ? "track" : "timed"); }
+  function paintRotSeg() {
+    var m = rotMode();
+    Array.prototype.forEach.call(rotSeg.children, function (o) { o.classList.toggle("on", o.dataset.rot === m); });
+    rotInt.style.display = m === "timed" ? "" : "none";
+    if (m === "timed" && typeof state.rotate === "number") { rotInput.value = state.rotate; paintRotInt(); }
+  }
+  function paintRotInt() {
+    var v = +rotInput.value;
+    rotVal.textContent = v >= 60 ? (Math.round(v / 6) / 10) + " min" : v + " s";
+    rotInput.style.setProperty("--fill", ((v - 10) / (600 - 10) * 100) + "%");
+  }
+  rotSeg.addEventListener("click", function (e) {
+    var opt = e.target.closest(".opt"); if (!opt) return;
+    buzz();
+    var m = opt.dataset.rot;
+    if (m === "off") post({ cmd: "lock" });
+    else if (m === "track") post({ cmd: "unlock" });
+    else post({ cmd: "rotate", value: +rotInput.value || 60 });
+  });
+  var rotTimer = null;
+  var rotGuard = dragGuard(rotInput, function () { paintRotInt(); clearTimeout(rotTimer); });
+  rotInput.addEventListener("input", function () {
+    if (rotGuard.blocked()) return;
+    paintRotInt();
+    clearTimeout(rotTimer); rotTimer = setTimeout(function () { post({ cmd: "rotate", value: +rotInput.value }); }, 200);
+  });
+  paintRotInt();
+
+  // ---------- palette mode (colors) ----------
+  // the pin set: palettePins, falling back to the legacy single `palette` pin
+  function currentPins() {
+    var pins = (options.palettePins || []).slice();
+    if (!pins.length && options.palette) pins = [options.palette];
+    return pins;
+  }
+  function sendPins(pins) {
+    options.palettePins = pins; options.palette = "";
+    return setLever("palettePins", pins).then(function () { return setLever("palette", ""); });
+  }
+  function palMode() {
+    if (options.albumColors) return (options.albumMixEvery || 0) >= 2 ? "mix" : "album";
+    return currentPins().length ? "pinned" : "shuffle";
+  }
+  function paintPalSeg() {
+    var m = palMode();
+    Array.prototype.forEach.call(palSeg.children, function (o) { o.classList.toggle("on", o.dataset.pal === m); });
+    highlightPalette();
+  }
+  palSeg.addEventListener("click", function (e) {
+    var opt = e.target.closest(".opt"); if (!opt) return;
+    buzz();
+    var m = opt.dataset.pal;
+    if (m === "album") {
+      options.albumColors = true; options.albumMixEvery = 0;
+      setLever("albumColors", true)
+        .then(function () { return setLever("albumMixEvery", 0); })
+        .then(refreshConfig);
+    } else if (m === "mix") {
+      // album palette every Nth change, shuffled palettes between (N from Advanced, default 3)
+      var n = (options.albumMixEvery || 0) >= 2 ? options.albumMixEvery : 3;
+      options.albumColors = true; options.albumMixEvery = n;
+      setLever("albumColors", true)
+        .then(function () { return setLever("albumMixEvery", n); })
+        .then(refreshConfig);
+    } else if (m === "pinned") {
+      options.albumColors = false;
+      var pins = currentPins();
+      if (!pins.length && state.palette) pins = [state.palette];
+      setLever("albumColors", false)
+        .then(function () { return pins.length ? sendPins(pins) : null; })
+        .then(refreshConfig);
+    } else { // shuffle: album off + no pins -> a fresh random palette every scene change
+      options.albumColors = false; options.palette = ""; options.palettePins = [];
+      setLever("albumColors", false)
+        .then(function () { return setLever("palettePins", []); })
+        .then(function () { return setLever("palette", ""); })
+        .then(refreshConfig);
+    }
+    paintPalSeg();
+  });
+  diceBtn.addEventListener("click", function () {
+    if (!catalogue.palettes.length) return;
+    buzz();
+    var p = catalogue.palettes[Math.floor(Math.random() * catalogue.palettes.length)];
+    var name = typeof p === "string" ? p : p.name;
+    options.albumColors = false;
+    setLever("albumColors", false)
+      .then(function () { return sendPins([name]); })
+      .then(refreshConfig);
+    toast("🎲 " + name);
+    paintPalSeg();
+  });
+
+  // scene chips: tap toggles pool membership (on/off), press-and-hold plays it now
+  var sceneEnabled = {};   // name -> bool, seeded from catalogue, kept in sync locally
+  function excludeList() {
+    return Object.keys(sceneEnabled).filter(function (n) { return !sceneEnabled[n]; });
+  }
+  function buildScenes() {
+    scenesEl.innerHTML = "";
+    catalogue.visuals.forEach(function (v) {
+      sceneEnabled[v.name] = v.enabled !== false;
+      var c = document.createElement("div"); c.className = "chip scene"; c.dataset.name = v.name;
+      var t = document.createElement("span"); t.textContent = v.name; c.appendChild(t);
+      c.title = v.description || "";
+      wireScene(c, v.name);
+      scenesEl.appendChild(c);
+    });
+    highlightScene();
+  }
+  var lastPlaying = null;
+  function highlightScene() {
+    Array.prototype.forEach.call(scenesEl.children, function (c) {
+      var name = c.dataset.name;
+      c.classList.toggle("off", !sceneEnabled[name]);
+      c.classList.toggle("playing", name === state.visual);
+    });
+    if (state.visual && state.visual !== lastPlaying) {
+      lastPlaying = state.visual;
+      var el = scenesEl.querySelector('[data-name="' + state.visual + '"]');
+      if (el) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    }
+  }
+  function wireScene(c, name) {
+    var timer = null, swallowClick = false, sx = 0, sy = 0;
+    c.addEventListener("pointerdown", function (e) {
+      swallowClick = false; sx = e.clientX; sy = e.clientY;
+      timer = setTimeout(function () {
+        swallowClick = true; c.classList.add("holding");
+        buzz(15);
+        post({ cmd: "visual", value: name }).then(function () { return post({ cmd: "lock" }); });
+        toast("▶ " + name + " — locked");
+        setTimeout(function () { c.classList.remove("holding"); }, 350);
+      }, 450);
+    });
+    function cancel() { clearTimeout(timer); }
+    c.addEventListener("pointermove", function (e) {
+      // finger drifted = the user is scrolling the strip, not holding
+      if (Math.abs(e.clientX - sx) > 8 || Math.abs(e.clientY - sy) > 8) { cancel(); swallowClick = true; }
+    });
+    c.addEventListener("pointerup", cancel);
+    c.addEventListener("pointerleave", cancel);
+    c.addEventListener("pointercancel", function () { cancel(); swallowClick = true; });
+    c.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    c.addEventListener("click", function () {
+      if (swallowClick) return;
+      if (sceneEnabled[name]) {
+        // never let the last enabled scene be switched off
+        var stillOn = Object.keys(sceneEnabled).filter(function (n) { return sceneEnabled[n]; });
+        if (stillOn.length <= 1) return;
+      }
+      buzz();
+      sceneEnabled[name] = !sceneEnabled[name];
+      highlightScene();
+      setLever("exclude", excludeList());
+    });
+  }
+
+  function buildPalettes() {
+    palPresets.innerHTML = ""; palGen.innerHTML = "";
+    var gen = 0;
+    catalogue.palettes.forEach(function (p) {
+      if (typeof p === "string") p = { name: p, colors: null, curated: false }; // old-server fallback
+      var card = document.createElement("div"); card.className = "pal"; card.dataset.name = p.name;
+      var bar = document.createElement("div"); bar.className = "bar"; bar.style.background = paletteBar(p.colors);
+      var nm = document.createElement("div"); nm.className = "nm"; nm.textContent = p.name;
+      card.appendChild(bar); card.appendChild(nm);
+      card.addEventListener("click", function () {
+        buzz();
+        var mode = palMode();
+        if (mode === "pinned" || mode === "mix") {
+          // multiselect: toggle membership in the pin set (Mix draws its in-between
+          // palettes from the same set). Never empty the set from here.
+          var pins = currentPins();
+          var i = pins.indexOf(p.name);
+          if (i >= 0) { if (pins.length > 1) pins.splice(i, 1); } else pins.push(p.name);
+          sendPins(pins).then(refreshConfig);
+        } else {
+          // from Album/Shuffle: jump to Pinned with just this palette
+          var wasAlbum = options.albumColors;
+          options.albumColors = false;
+          (wasAlbum ? setLever("albumColors", false) : Promise.resolve())
+            .then(function () { return sendPins([p.name]); })
+            .then(refreshConfig);
+        }
+        paintPalSeg();
+      });
+      if (p.curated) palPresets.appendChild(card); else { palGen.appendChild(card); gen++; }
+    });
+    genCount.textContent = gen ? "(" + gen + ")" : "";
+    highlightPalette();
+  }
+  function highlightPalette() {
+    var pins = currentPins();
+    // pins drive the highlight in Pinned mode, and in Mix (they're its in-between pool);
+    // otherwise fall back to highlighting whatever palette is live right now
+    var usePins = pins.length > 0 && (!options.albumColors || (options.albumMixEvery || 0) >= 2);
+    var anyOpen = false;
+    Array.prototype.forEach.call(document.querySelectorAll(".pal"), function (c) {
+      var on = usePins ? pins.indexOf(c.dataset.name) >= 0
+                       : (!options.albumColors && c.dataset.name === state.palette);
+      c.classList.toggle("sel", on);
+      if (on && c.parentElement === palGen) anyOpen = true;
+    });
+    if (anyOpen) $("#genWrap").open = true;
+  }
+
+  // ---------- sliders ----------
+  var fmts = {
+    x: function (v) { return (+v).toFixed(2) + "×"; },
+    pct: function (v) { return Math.round(v * 100) + "%"; },
+    ms: function (v) { return Math.round(v) + " ms"; },
+    sec: function (v) { return Math.round(v) + " s"; },
+    fps: function (v) { return Math.round(v) + " fps"; },
+    nth: function (v) { v = Math.round(v); if (v < 2) return "always";
+      return "every " + v + (v === 2 ? "nd" : v === 3 ? "rd" : "th"); },
+    deg: function (v) { return Math.round(v) + "°"; },
+    raw2: function (v) { return (+v).toFixed(2); },
+    raw3: function (v) { return (+v).toFixed(3); },
+  };
+  var throttles = {};
+  // Accidental-touch guard: a slider only reacts to a deliberate horizontal drag.
+  // Taps on the track (which natively jump the value) and brushes while scrolling
+  // are reverted; keyboard arrows (no pointer gesture) pass through untouched.
+  function dragGuard(input, onRevert) {
+    var g = null; // {x, v, drag} for the active pointer gesture
+    input.addEventListener("pointerdown", function (e) { g = { x: e.clientX, v: input.value, drag: false }; });
+    input.addEventListener("pointermove", function (e) { if (g && Math.abs(e.clientX - g.x) > 10) g.drag = true; });
+    function end() {
+      if (g && !g.drag && input.value !== g.v) { input.value = g.v; onRevert(+g.v); }
+      g = null;
+    }
+    input.addEventListener("pointerup", end);
+    input.addEventListener("pointercancel", end);
+    return { blocked: function () { return !!(g && !g.drag); } };
+  }
+  function wireSlider(el) {
+    var key = el.dataset.key, input = $("input", el), vEl = $(".v", el), fmt = fmts[el.dataset.fmt];
+    var min = +el.dataset.min, max = +el.dataset.max;
+    input.min = el.dataset.min; input.max = el.dataset.max; input.step = el.dataset.step;
+    function paint(v) { vEl.textContent = fmt(v); input.style.setProperty("--fill", ((v - min) / (max - min) * 100) + "%"); }
+    el._set = function (v) { if (v == null || isNaN(v)) return; input.value = v; paint(v); };
+    function send(v) {
+      var p = el.dataset.cmd === "gain" ? post({ cmd: "gain", value: +v }) : setLever(key, +v);
+      if (el.dataset.refresh === "layout") p.then(refetchLayout); // rotation moved the panels
+    }
+    var guard = dragGuard(input, function (v) { paint(v); options[key] = v; clearTimeout(throttles[key]); });
+    input.addEventListener("input", function () {
+      if (guard.blocked()) return; // not a drag (yet) — ignore the native tap-jump
+      var v = +input.value; paint(v); options[key] = v;
+      clearTimeout(throttles[key]); throttles[key] = setTimeout(function () { send(v); }, 140);
+    });
+    input.addEventListener("change", function () {
+      if (guard.blocked()) return;
+      clearTimeout(throttles[key]); send(+input.value);
+    });
+    // TV remote: ◀ ▶ steps the value through the same throttled send path
+    el._nudge = function (dir) {
+      var v = Math.min(max, Math.max(min, +input.value + dir * (+input.step || 1)));
+      input.value = v; paint(v); options[key] = v;
+      clearTimeout(throttles[key]); throttles[key] = setTimeout(function () { send(v); }, 140);
+    };
+    return el;
+  }
+  var sliders = {};
+  Array.prototype.forEach.call(document.querySelectorAll(".slider[data-key]"), function (el) { sliders[el.dataset.key] = wireSlider(el); });
+  function syncSliders() {
+    for (var key in sliders) {
+      var v = key === "gain" ? state.gain : options[key];
+      if (v != null && sliders[key]._set) sliders[key]._set(v);
+    }
+  }
+
+  // ---------- quick actions ----------
+  var PRESETS = {
+    calm:     [{ cmd: "set", key: "flashStrength", value: 0 }, { cmd: "set", key: "attackMs", value: 30 }, { cmd: "set", key: "releaseMs", value: 300 }, { cmd: "visual", value: "chase-flow" }, { cmd: "lock" }],
+    reactive: [{ cmd: "set", key: "flashStrength", value: 0.5 }, { cmd: "set", key: "attackMs", value: 5 }, { cmd: "set", key: "releaseMs", value: 140 }, { cmd: "unlock" }],
+  };
+  function applyPreset(name) {
+    var seq = PRESETS[name]; if (!seq) return;
+    (function run(i) { if (i >= seq.length) { refreshConfig(); return; } post(seq[i]).then(function () { run(i + 1); }); })(0);
+    toast(name === "calm" ? "🌙 Calm preset" : "⚡ Reactive preset");
+  }
+  document.querySelectorAll("[data-preset]").forEach(function (b) {
+    b.addEventListener("click", function () { buzz(); b.classList.add("primary"); setTimeout(function () { b.classList.remove("primary"); }, 400); applyPreset(b.dataset.preset); });
+  });
+  $("[data-act='shuffle']").addEventListener("click", function () { buzz(); post({ cmd: "next" }); });
+  $("#resetBtn").addEventListener("click", function () {
+    var lbl = $("#resetBtn span:last-child");
+    buzz();
+    lbl.textContent = "Resetting…";
+    post({ cmd: "reset" }).then(function (r) {
+      lbl.textContent = "Reset panels";
+      toast(r && r.ok ? "💡 Panels reset" : "Reset failed — controller unreachable?");
+    }).catch(function () { lbl.textContent = "Reset panels"; });
+  });
+  autoBtn.addEventListener("click", function () { buzz(); post({ cmd: state.locked ? "unlock" : "lock" }); });
+
+  // re-pull the layout after a rotation change so the wall preview re-fits live
+  function refetchLayout() {
+    fetch("/api/catalogue").then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.layout) { catalogue.layout = d.layout; catalogue.panelSide = d.panelSide || catalogue.panelSide; sizeWall(); }
+    }).catch(function () {});
+  }
+
+  // ---------- config (lever values) ----------
+  function refreshConfig() {
+    fetch("/api/config").then(function (r) { return r.json(); }).then(function (d) {
+      options = d.values || {}; syncSliders(); paintPalSeg();
+    }).catch(function () {});
+  }
+
+  // ---------- SSE ----------
   function connect() {
-    es = new EventSource("/events");
+    var es = new EventSource("/events");
     es.addEventListener("hello", function (e) {
-      var d = JSON.parse(e.data); catalogue = d.catalogue; state = d.state; renderState();
-      connEl.classList.remove("show");
+      var d = JSON.parse(e.data); catalogue = d.catalogue || catalogue; state = d.state || state;
+      sizeWall(); // new layout → re-aspect + refit the wall preview
+      buildScenes(); buildPalettes(); renderNP(); syncSliders(); refreshConfig();
+      dotEl.classList.remove("off"); statusEl.textContent = "live";
+      if (TV && !tvFocusEl) {
+        // land the D-pad on the first Quick action (not the Rotate slider, which is
+        // first in document order) and keep the page at the top — no scroll jump
+        tvSetFocus($("#tvRight .act") || tvFocusables()[0] || null, true);
+        scrollTo(0, 0);
+      }
     });
     es.addEventListener("frame", function (e) {
-      var d = JSON.parse(e.data); colors = d.c; features = d.f || features;
-      if (features.onset) beat = 1;
+      var d = JSON.parse(e.data); colors = d.c || colors; features = d.f || features; if (features.onset) beat = 1;
     });
-    es.addEventListener("state", function (e) { state = JSON.parse(e.data); renderState(); });
-    es.onopen = function () { connEl.classList.remove("show"); };
-    es.onerror = function () { connEl.classList.add("show"); }; // EventSource auto-reconnects
+    es.addEventListener("state", function (e) { state = JSON.parse(e.data); renderNP(); syncSliders(); });
+    es.onopen = function () { dotEl.classList.remove("off"); statusEl.textContent = "live"; };
+    es.onerror = function () {
+      dotEl.classList.add("off"); statusEl.textContent = "reconnecting…";
+      colors = []; features = { energy: 0, bass: 0, mid: 0, treble: 0, onset: false }; // stale frames lie
+    };
   }
   connect();
 
-  // ---- controls (D-pad friendly) ----
-  var focusIdx = 0, barTimer = null;
-  function showBar() {
-    barEl.classList.add("show"); hintEl.classList.remove("show"); setFocus(focusIdx);
-    clearTimeout(barTimer); barTimer = setTimeout(hideBar, 6000);
+  // ---------- Shield remote: D-pad spatial navigation ----------
+  // The wrapper forwards up/down/left/right/ok/next via window.__tvKey.
+  // Focus moves geometrically to the nearest control in the pressed direction;
+  // ◀ ▶ on a focused slider scrub it instead; OK on a scene plays it (the
+  // phone's press-and-hold); ⏭ shuffles from anywhere.
+  var tvFocusEl = null;
+  function tvFocusables() {
+    var sel = ".act, .seg .opt, .chip, .pal, .slider, details.card > summary, #genWrap > summary, .h2hint.btn-ish";
+    return Array.prototype.filter.call(document.querySelectorAll(sel), function (el) {
+      var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; // skips closed <details> + display:none
+    });
   }
-  function hideBar() { barEl.classList.remove("show"); buttons.forEach(function (b) { b.classList.remove("focus"); }); }
-  function setFocus(i) {
-    focusIdx = (i + buttons.length) % buttons.length;
-    buttons.forEach(function (b, j) { b.classList.toggle("focus", j === focusIdx); });
-  }
-  function post(cmd, value) {
-    fetch("/api/command", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cmd: cmd, value: value }),
-    }).catch(function () {});
-  }
-  var paletteIdx = 0;
-  function activate(cmd) {
-    if (cmd === "prev" || cmd === "next") post("next");            // both advance the shuffle
-    else if (cmd === "lock") post(state.locked ? "unlock" : "lock");
-    else if (cmd === "palette") { paletteIdx = (paletteIdx + 1) % (catalogue.palettes.length || 1);
-      post("palette", catalogue.palettes[paletteIdx]); }
-    else if (cmd === "gain+") post("gain", Math.min(8, (state.gain || 1) + 0.25));
-    else if (cmd === "gain-") post("gain", Math.max(0.25, (state.gain || 1) - 0.25));
-  }
-
-  buttons.forEach(function (b, i) {
-    b.addEventListener("click", function () { setFocus(i); activate(b.dataset.cmd); });
-  });
-
-  // Semantic key handling, shared by browser keydown and the native TV wrapper
-  // (the Android WebView calls window.__tvKey because Chromium ignores synthetic keyCodes).
-  function handleKey(name) {
-    var barOpen = barEl.classList.contains("show");
-    switch (name) {
-      case "up": showBar(); break;
-      case "down": if (barOpen) hideBar(); break;
-      case "left": if (barOpen) { setFocus(focusIdx - 1); resetTimer(); } break;
-      case "right": if (barOpen) { setFocus(focusIdx + 1); resetTimer(); } break;
-      case "ok": if (barOpen) { activate(buttons[focusIdx].dataset.cmd); resetTimer(); } else showBar(); break;
-      case "back": if (barOpen) hideBar(); break;
-      case "next": activate("next"); break;
+  function tvSetFocus(el, skipScroll) {
+    if (tvFocusEl) tvFocusEl.classList.remove("tvfocus");
+    tvFocusEl = el;
+    if (el) {
+      el.classList.add("tvfocus");
+      if (!skipScroll) el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
     }
   }
-  window.__tvKey = handleKey; // called by the Android TV wrapper
+  function tvMove(dir) {
+    var list = tvFocusables();
+    if (!list.length) return;
+    if (!tvFocusEl || list.indexOf(tvFocusEl) < 0) { tvSetFocus(list[0]); return; } // rebuilt DOM or first press
+    var r = tvFocusEl.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var vx = dir === "left" ? -1 : dir === "right" ? 1 : 0;
+    var vy = dir === "up" ? -1 : dir === "down" ? 1 : 0;
+    var best = null, bestScore = Infinity;
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i]; if (el === tvFocusEl) continue;
+      var b = el.getBoundingClientRect();
+      var dx = (b.left + b.width / 2) - cx, dy = (b.top + b.height / 2) - cy;
+      var fwd = dx * vx + dy * vy;              // progress along the pressed direction
+      if (fwd < 4) continue;                    // must actually be that way
+      var ortho = Math.abs(dx * vy) + Math.abs(dy * vx);
+      var score = fwd + ortho * 2.5;            // prefer straight-ahead over diagonal
+      if (score < bestScore) { bestScore = score; best = el; }
+    }
+    if (best) tvSetFocus(best);
+  }
+  function tvNudge(el, dir) {
+    if (el._nudge) { el._nudge(dir); return; }
+    // sliders wired outside wireSlider (rotate interval): step + synthetic input event
+    var input = $("input", el); if (!input) return;
+    var v = Math.min(+input.max, Math.max(+input.min, +input.value + dir * (+input.step || 1)));
+    input.value = v;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  function tvActivate() {
+    var el = tvFocusEl;
+    if (!el) { tvMove("down"); return; }
+    if (el.classList.contains("scene")) {
+      // OK on a scene = play it now + lock (membership toggling stays a touch affordance)
+      var name = el.dataset.name;
+      post({ cmd: "visual", value: name }).then(function () { return post({ cmd: "lock" }); });
+      toast("▶ " + name + " — locked");
+      return;
+    }
+    if (el.classList.contains("slider")) { toast("◀ ▶ adjusts this slider"); return; }
+    el.click();
+  }
+  window.__tvKey = function (name) {
+    if (!TV) { // old wrapper without the UA tag: keep the legacy minimal behavior
+      if (name === "next" || name === "ok") post({ cmd: "next" });
+      else if (name === "up") scrollBy({ top: -240, behavior: "smooth" });
+      else if (name === "down") scrollBy({ top: 240, behavior: "smooth" });
+      return;
+    }
+    if (name === "next") { post({ cmd: "next" }); toast("⏭ next scene"); return; }
+    if ((name === "left" || name === "right") && tvFocusEl && tvFocusEl.classList.contains("slider")) {
+      tvNudge(tvFocusEl, name === "right" ? 1 : -1); return;
+    }
+    if (name === "ok") { tvActivate(); return; }
+    if (name === "up" || name === "down" || name === "left" || name === "right") tvMove(name);
+  };
 
-  var KEYS = { 38: "up", 40: "down", 37: "left", 39: "right", 13: "ok", 32: "ok", 78: "next", 8: "back", 27: "back" };
-  document.addEventListener("keydown", function (e) {
-    var name = KEYS[e.keyCode];
-    if (!name) return;
-    if (!(name === "back" && !barEl.classList.contains("show"))) e.preventDefault();
-    handleKey(name);
-  });
-  function resetTimer() { clearTimeout(barTimer); barTimer = setTimeout(hideBar, 6000); }
-
-  // show the hint briefly on load, and open controls on a tap/click anywhere
-  hintEl.classList.add("show"); setTimeout(function () { hintEl.classList.remove("show"); }, 4000);
-  document.addEventListener("click", function (e) { if (!barEl.contains(e.target)) showBar(); });
+  // PWA shell cache — service workers need a secure context, so this is a no-op over plain http
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register("/sw.js").catch(function () {});
+  }
 })();
 </script>
 </body>

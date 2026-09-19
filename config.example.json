@@ -21,7 +21,8 @@
   },
   "roon": {
     "enabled": true,
-    "zone": ""
+    "zone": "",
+    "feedOutput": ""
   },
   "visuals": {
     "include": [],

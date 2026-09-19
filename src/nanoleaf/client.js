@@ -89,6 +89,21 @@ class NanoleafClient {
     return this._request('GET', this._authed('/panelLayout/layout'));
   }
 
+  /**
+   * The layout rotation set in the Nanoleaf app (degrees) — how much the raw
+   * layout must be rotated to match the panels' physical mounting.
+   * @returns {Promise<number>} degrees, 0 when unavailable
+   */
+  async getGlobalOrientation() {
+    try {
+      const res = await this._request('GET', this._authed('/panelLayout/globalOrientation'));
+      const v = res && typeof res === 'object' ? res.value : res;
+      return Number.isFinite(+v) ? +v : 0;
+    } catch {
+      return 0; // orientation is an enhancement — never block startup on it
+    }
+  }
+
   /** Flash the panels to identify the device. */
   async identify() {
     return this._request('PUT', this._authed('/identify'));
@@ -104,6 +119,17 @@ class NanoleafClient {
   /** Turn the panels on or off. */
   async setPower(on) {
     return this._request('PUT', this._authed('/state'), { on: { value: !!on } });
+  }
+
+  /** Set the controller's global brightness (0-100). Scales every streamed frame. */
+  async setBrightness(value) {
+    return this._request('PUT', this._authed('/state'), { brightness: { value: Math.max(0, Math.min(100, value | 0)) } });
+  }
+
+  /** Current global brightness (0-100). */
+  async getBrightness() {
+    const res = await this._request('GET', this._authed('/state/brightness'));
+    return res && typeof res.value === 'number' ? res.value : null;
   }
 
   /** Whether the panels are currently powered on. */

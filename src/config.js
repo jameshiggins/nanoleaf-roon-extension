@@ -9,6 +9,8 @@ const DEFAULTS = {
     port: 16021,
     token: '',           // create with `npm run pair`
     fps: 30,             // UDP frame rate (extControl v2)
+    idleEffect: '',      // effect to select on release when no pre-play effect was saved
+                         // (e.g. after a hard restart mid-stream); '' = stay in *Dynamic*
   },
   audio: {
     source: 'slimproto', // slimproto | capture | stdin
@@ -24,25 +26,31 @@ const DEFAULTS = {
   roon: {
     enabled: true,       // pair with Roon: reports status and drives track-change rotation
     zone: '',            // zone to follow for track changes (case-insensitive substring); '' = any
+    feedOutput: '',      // name of the VB-Cable output in Roon (case-insensitive substring): warn when Roon loses it; '' = only warn on playing-but-silent
   },
   visuals: {
     include: [],         // limit to these visualizer names; empty = all
     exclude: [],         // visualizers to skip
     palettes: 36,        // how many color palettes to generate (>= 1)
     palette: '',         // pin one palette by name (e.g. "Retro"); '' = rotate colors too
+    palettePins: [],     // pin several palettes; rotation shuffles among just these (overrides `palette`)
     albumColors: false,  // derive the palette from Roon album art each track (falls back to `palette`)
     albumSat: 0.9,       // tone-pass saturation for album colors (1 = fully vivid)
     albumVal: 1.0,       // tone-pass brightness for album colors
     albumMaxColors: 10,  // most distinct hues to pull from a cover (3–21)
     albumPredominantChance: 0.33, // chance a track uses the cover's N most-present colors
     albumPredominantCount: 4,     // how many predominant colors when that mode fires
+    albumMixEvery: 0,    // 0/1 = album palette every change; N>=2 = album every Nth, shuffled palettes between
     rotate: 'track',     // 'track' | 'off' | <seconds>  — when to switch the look
     minSeconds: 8,       // don't rotate more often than this on rapid track skipping
+    fps: 45,             // panel frame rate (10-60); overrides nanoleaf.fps, live-settable
     gain: 1.0,           // linear gain applied to the audio level before mapping
     attackMs: 5,         // envelope rise time constant
     releaseMs: 180,      // envelope fall time constant
     silenceFloor: 0.02,  // energy below this fades the panels to black
     flashStrength: 0.5,  // beat-flash intensity (0 = no flash, 1 = full bright)
+    brightness: 1,       // master output brightness for the streamed visuals (0.05–1)
+    rotateLayout: 0,     // extra layout rotation (deg) on top of the controller's globalOrientation
     onsetSensitivity: 1.1, // beat-detection strictness (lower = more beats/livelier)
     releaseDebounceMs: 5000,   // how long panels are held after Roon goes idle
     extControlKeepaliveMs: 4000, // re-assert extControl this often while playing
@@ -114,6 +122,7 @@ function validate(cfg, errors) {
   }
 
   str(cfg.roon.zone, 'roon.zone');
+  str(cfg.roon.feedOutput, 'roon.feedOutput');
   if (typeof cfg.roon.enabled !== 'boolean') errors.push('roon.enabled: expected true or false');
   if (cfg.visuals.rotate === 'track' && cfg.roon.enabled !== true) {
     errors.push('visuals.rotate "track" requires roon.enabled: true (track changes come from Roon)');
@@ -151,6 +160,8 @@ function validate(cfg, errors) {
   num(cfg.visuals.releaseMs, 'visuals.releaseMs', 0, 10000);
   num(cfg.visuals.silenceFloor, 'visuals.silenceFloor', 0, 1);
   num(cfg.visuals.flashStrength, 'visuals.flashStrength', 0, 1);
+  num(cfg.visuals.brightness, 'visuals.brightness', 0, 1);
+  num(cfg.visuals.rotateLayout, 'visuals.rotateLayout', 0, 359);
   num(cfg.visuals.onsetSensitivity, 'visuals.onsetSensitivity', 0, 10);
   num(cfg.visuals.releaseDebounceMs, 'visuals.releaseDebounceMs', 0, 60000);
   num(cfg.visuals.extControlKeepaliveMs, 'visuals.extControlKeepaliveMs', 500, 60000);
@@ -211,11 +222,15 @@ const VISUALS_LEVERS = {
   gain: { type: 'number', min: 0, max: 100, apply: 'gain' },
   rotate: { type: 'rotate', apply: 'rotate' },
   palette: { type: 'string', apply: 'palette' },
+  palettePins: { type: 'strings', apply: 'palettePins' },
   include: { type: 'strings', apply: 'pool' },
   exclude: { type: 'strings', apply: 'pool' },
   palettes: { type: 'number', min: 1, max: 1000, apply: 'palettes' },
   minSeconds: { type: 'number', min: 0, max: 3600, apply: 'set' },
+  fps: { type: 'number', min: 10, max: 60, apply: 'fps' },
   flashStrength: { type: 'number', min: 0, max: 1, apply: 'set' },
+  brightness: { type: 'number', min: 0.05, max: 1, apply: 'set' },
+  rotateLayout: { type: 'number', min: 0, max: 359, apply: 'layout' },
   onsetSensitivity: { type: 'number', min: 0, max: 10, apply: 'onset' },
   silenceFloor: { type: 'number', min: 0, max: 1, apply: 'set' },
   attackMs: { type: 'number', min: 0, max: 5000, apply: 'features' },
@@ -226,6 +241,7 @@ const VISUALS_LEVERS = {
   albumMaxColors: { type: 'number', min: 3, max: 21, apply: 'set' },
   albumPredominantChance: { type: 'number', min: 0, max: 1, apply: 'set' },
   albumPredominantCount: { type: 'number', min: 3, max: 12, apply: 'set' },
+  albumMixEvery: { type: 'number', min: 0, max: 10, apply: 'set' },
   releaseDebounceMs: { type: 'number', min: 0, max: 60000, apply: 'set' },
   extControlKeepaliveMs: { type: 'number', min: 500, max: 60000, apply: 'set' },
 };

@@ -40,10 +40,13 @@ class RoonExtension {
    *   Providing it makes RoonApiTransport a required service and (re)subscribes
    *   on every pairing — core_paired delivers a fresh Core after each reconnect,
    *   so the subscription must be renewed there.
+   *   onOutputEvent: raw subscribe_outputs callback (e.g. FeedMonitor#handleOutputs);
+   *   rides on the transport service, so it only fires alongside onZoneEvent.
    *   wantImages: request the image service so getImage() can fetch album art.
    */
   constructor(opts = {}) {
     this.onZoneEvent = opts.onZoneEvent ?? null;
+    this.onOutputEvent = opts.onOutputEvent ?? null;
     this.wantImages = opts.wantImages ?? false;
     this.roon = null;
     this.status = null;
@@ -65,6 +68,9 @@ class RoonExtension {
     }
 
     this.roon = new RoonApi({
+      // Without this, node-roon-api console.logs every message body — including full
+      // zone dumps and album-art JPEGs serialized as JSON — into the service log.
+      log_level: 'none',
       extension_id: 'com.jameshiggins.nanoleaf-roon',
       display_name: 'Nanoleaf Roon Extension',
       display_version: require('../../package.json').version,
@@ -84,6 +90,15 @@ class RoonExtension {
               log.error('zone event handler failed:', err);
             }
           });
+          if (this.onOutputEvent) {
+            core.services.RoonApiTransport.subscribe_outputs((response, msg) => {
+              try {
+                this.onOutputEvent(response, msg);
+              } catch (err) {
+                log.error('output event handler failed:', err);
+              }
+            });
+          }
         }
       },
       core_unpaired: () => {

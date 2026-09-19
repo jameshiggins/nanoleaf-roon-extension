@@ -139,6 +139,8 @@ class FeatureExtractor {
     );
     this.pendingOnset = false;
     this.sampleRate = opts.sampleRate ?? 44100;
+    this.lastChunkAt = 0;
+    this.lastDecayAt = 0;
   }
 
   setFormat({ sampleRate, channels }) {
@@ -162,10 +164,25 @@ class FeatureExtractor {
     this.env.mid.update(clamp(m.mid * 2.5), dt);
     this.env.treble.update(clamp(m.treble * 4), dt);
     if (this.onsetDetector.update(m.bass * g, this.now())) this.pendingOnset = true;
+    this.lastChunkAt = this.now();
+    this.lastDecayAt = 0;
   }
 
   /** Read the current feature set; the onset flag is consumed (fires once). */
   snapshot() {
+    // Envelopes only advance in onChunk, so a stalled capture feed (ffmpeg respawn,
+    // dshow hiccup) freezes them at their last value and the wall animates blind,
+    // then snaps when audio returns. Treat a >250 ms feed gap as silence instead:
+    // decay every envelope toward 0 for the elapsed time.
+    const nowMs = this.now();
+    if (this.lastChunkAt && nowMs - this.lastChunkAt > 250) {
+      const since = nowMs - (this.lastDecayAt || this.lastChunkAt);
+      if (since > 0) {
+        for (const key of Object.keys(this.env)) this.env[key].update(0, since);
+        this.lastDecayAt = nowMs;
+      }
+      this.pendingOnset = false;
+    }
     const e = this.env;
     const onset = this.pendingOnset;
     this.pendingOnset = false;

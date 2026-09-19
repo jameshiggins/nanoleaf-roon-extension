@@ -11,10 +11,10 @@ const LAYOUT = [
   { id: 2, nx: 1, ny: 1 },
 ];
 const CFG = {
-  include: [], exclude: [], palettes: 8, palette: '', rotate: 'track', minSeconds: 8,
-  gain: 1, attackMs: 5, releaseMs: 180, silenceFloor: 0.02, flashStrength: 0.5, onsetSensitivity: 1.1,
+  include: [], exclude: [], palettes: 8, palette: '', palettePins: [], rotate: 'track', minSeconds: 8, fps: 30,
+  gain: 1, attackMs: 5, releaseMs: 180, silenceFloor: 0.02, flashStrength: 0.5, brightness: 1, rotateLayout: 0, onsetSensitivity: 1.1,
   albumColors: true, albumSat: 0.9, albumVal: 1, albumMaxColors: 10,
-  albumPredominantChance: 0.33, albumPredominantCount: 4,
+  albumPredominantChance: 0.33, albumPredominantCount: 4, albumMixEvery: 0,
   releaseDebounceMs: 5000, extControlKeepaliveMs: 4000,
 };
 
@@ -46,7 +46,8 @@ test('applyCommand: set drives any visuals lever, validates, rejects unknown', (
   assert.equal(applyCommand(r, { cmd: 'set', key: 'nanoleaf.fps', value: 60 }).ok, false);
   // exclude rebuilds the pool live
   assert.equal(applyCommand(r, { cmd: 'set', key: 'exclude', value: ['wheel'] }).ok, true);
-  assert.ok(!r.getCatalogue().visuals.some((v) => v.name === 'wheel'), 'wheel dropped from the pool');
+  const wheel = r.getCatalogue().visuals.find((v) => v.name === 'wheel');
+  assert.ok(wheel && !wheel.enabled, 'wheel still listed but flagged out of the pool');
   // album lever stored (applies next track)
   assert.equal(applyCommand(r, { cmd: 'set', key: 'albumMaxColors', value: 6 }).ok, true);
   assert.equal(r.config.albumMaxColors, 6);
@@ -104,6 +105,28 @@ test('GET /api/config returns current lever values + ranges for the menu', async
     assert.ok(cfg.levers.gain && cfg.levers.gain.max === 100);
     assert.equal(Object.keys(cfg.values).length, Object.keys(cfg.levers).length, 'a value per lever');
   });
+});
+
+test('GET /api/art serves the current cover, 204 when there is none', async () => {
+  // no provider → 204
+  await withServer(async ({ port }) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/art`);
+    assert.equal(res.status, 204);
+  });
+  // provider with art → the bytes, with the right type
+  const renderer = makeRenderer();
+  const art = { key: 'k1', body: Buffer.from([1, 2, 3, 4]), type: 'image/jpeg' };
+  const server = new ControlServer({ renderer, port: 0, host: '127.0.0.1', getArt: () => art });
+  const port = await server.start();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/art`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/jpeg');
+    const buf = Buffer.from(await res.arrayBuffer());
+    assert.deepEqual([...buf], [1, 2, 3, 4]);
+  } finally {
+    server.stop();
+  }
 });
 
 test('POST set persists via onChange, once per successful mutating command', async () => {

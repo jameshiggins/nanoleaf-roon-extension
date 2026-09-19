@@ -45,6 +45,10 @@ const WEBAPP_DIR = path.join(__dirname, 'webapp');
 const STATIC = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
+  '/manifest.webmanifest': { file: 'manifest.webmanifest', type: 'application/manifest+json' },
+  '/sw.js': { file: 'sw.js', type: 'text/javascript; charset=utf-8' },
+  '/icon-192.png': { file: 'icon-192.png', type: 'image/png' },
+  '/icon-512.png': { file: 'icon-512.png', type: 'image/png' },
 };
 
 /**
@@ -105,6 +109,7 @@ class ControlServer {
     this.port = opts.port ?? 8787;
     this.host = opts.host ?? '0.0.0.0';
     this.onChange = opts.onChange ?? null; // called after a mutating command, to persist config
+    this.getArt = opts.getArt ?? null;     // () => { body, type } | null — current album cover
     this.frameInterval = 1000 / (opts.frameHz ?? 20);
     this.clients = new Set();       // Set<ServerResponse> of SSE connections
     this.lastFrameAt = 0;
@@ -153,6 +158,7 @@ class ControlServer {
     if (req.method === 'GET' && p === '/api/state') return this._json(res, 200, this.renderer.getState());
     if (req.method === 'GET' && p === '/api/catalogue') return this._json(res, 200, this.renderer.getCatalogue());
     if (req.method === 'GET' && p === '/api/config') return this._json(res, 200, { values: this.renderer.getOptions(), levers: VISUALS_LEVERS });
+    if (req.method === 'GET' && p === '/api/art') return this._art(res);
     if (req.method === 'POST' && p === '/api/command') return this._command(req, res);
     if (req.method === 'GET' && STATIC[p]) return this._static(res, STATIC[p]);
     if (req.method === 'GET' && p === '/favicon.ico') return this._send(res, 204, '', 'image/x-icon');
@@ -181,12 +187,26 @@ class ControlServer {
       } catch {
         return this._json(res, 400, { ok: false, error: 'invalid JSON' });
       }
+      // 'reset' is async (talks to the controller over HTTP), so it bypasses applyCommand
+      if (body && body.cmd === 'reset') {
+        this.renderer.resetPanels()
+          .then((r) => this._json(res, r.ok ? 200 : 502, { ...r, state: this.renderer.getState() }))
+          .catch((err) => this._json(res, 502, { ok: false, error: err.message }));
+        return;
+      }
       const result = applyCommand(this.renderer, body);
       if (result.ok && this.onChange && MUTATING.has(body && body.cmd)) {
         try { this.onChange(); } catch (err) { /* persistence is best-effort */ void err; }
       }
       this._json(res, result.ok ? 200 : 400, result);
     });
+  }
+
+  _art(res) {
+    const art = this.getArt ? this.getArt() : null;
+    if (!art || !art.body) return this._send(res, 204, '', 'text/plain');
+    res.writeHead(200, { 'Content-Type': art.type || 'image/jpeg', 'Cache-Control': 'no-store' });
+    res.end(art.body);
   }
 
   _openSse(req, res) {

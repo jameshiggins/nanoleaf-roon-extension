@@ -92,6 +92,7 @@ async function runService(configFile) {
   // so a Roon outage never darkens the panels — rotation just pauses.
   let roon = null;
   let renderer = null;
+  let latestArt = null; // { key, body, type } — current track's cover for the companion app
   if (cfg.roon.enabled) {
     const { RoonExtension } = require('./roon/extension');
     const { TrackWatcher } = require('./roon/trackwatcher');
@@ -110,9 +111,21 @@ async function runService(configFile) {
       resolvePalette(Math.random() < 0.5 ? 'Mono' : 'Vintage Modern', cfg.visuals.palettes);
     watcher.on('track', (track) => {
       if (!renderer) return;
-      renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
+      renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName, art: track.imageKey || null });
       renderer.onTrackChange();
       currentTrackKey = track.key;
+      // Companion-app cover art: cache a phone-sized copy of the current cover so the
+      // control server can serve GET /api/art without a Roon round-trip per client.
+      if (track.imageKey) {
+        roon.getImage(track.imageKey, { width: 600, height: 600 })
+          .then((img) => {
+            if (track.key !== currentTrackKey) return; // a newer track won the race
+            latestArt = { key: track.imageKey, body: img.body, type: img.contentType || 'image/jpeg' };
+          })
+          .catch(() => { if (track.key === currentTrackKey) latestArt = null; });
+      } else {
+        latestArt = null;
+      }
       // Checked per track (not cached) so the albumColors lever can be toggled live.
       if (!cfg.visuals.albumColors) { renderer.clearLivePalette(); return; }
       if (!track.imageKey) { renderer.clearLivePalette(); return; } // no art → pinned palette
@@ -141,45 +154,92 @@ async function runService(configFile) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
       }
     });
+    // Feed health: Roon playing into a dead cable looks exactly like a quiet song on
+    // the wall, so say it out loud — service log, Roon's extension status, companion app.
+    const { FeedMonitor } = require('./roon/feedmonitor');
+    const feed = new FeedMonitor({ output: cfg.roon.feedOutput });
+    let roonPlaying = false;
+    watcher.on('playing', () => { roonPlaying = true; });
+    watcher.on('idle', () => { roonPlaying = false; });
+    feed.on('warning', (warning) => {
+      feedWarning = warning;
+      if (warning) log.warn(`${warning} Diagnose with nanoleaf-roon-service\\check-roonbridge.ps1`);
+      else log.info('audio feed from Roon is back');
+      if (renderer) renderer.setWarning(warning);
+      pushStatus();
+    });
+    setInterval(() => {
+      if (!renderer) return;
+      feed.sample(roonPlaying, renderer.lastFeatures.energy > cfg.visuals.silenceFloor, Date.now());
+    }, 5000).unref();
     roon = new RoonExtension({
       onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
+      onOutputEvent: (response, msg) => feed.handleOutputs(response, msg),
       wantImages: true, // always request the image service so albumColors can toggle live
     });
     // roon.start() is deferred until after the renderer exists (below). Roon can be
     // playing the instant we subscribe, and that first 'playing' must reach a live
     // renderer — starting here would fire it into a null renderer and never acquire.
   }
+  // A feed warning stays pinned to Roon's status line; otherwise the next track
+  // change ("▶ visual · palette") would wipe it within minutes.
+  let feedWarning = null;
+  let lastStatus = { msg: '', isErr: false };
+  const pushStatus = () => {
+    if (!roon) return;
+    if (feedWarning) roon.setStatus(`${feedWarning} | ${lastStatus.msg}`, true);
+    else roon.setStatus(lastStatus.msg, lastStatus.isErr);
+  };
   const setStatus = (msg, isErr) => {
     log.info(`status: ${msg}`);
-    if (roon) roon.setStatus(msg, isErr);
+    lastStatus = { msg, isErr };
+    pushStatus();
   };
 
   // Nanoleaf: validate the token and fetch the layout. We deliberately do NOT power on
   // or enter extControl here — the renderer takes the panels when Roon starts playing
   // and gives them back when it stops.
   const client = new NanoleafClient(cfg.nanoleaf);
+  // Retry the first contact forever with capped backoff: at boot this process can
+  // start before the network stack is up (ENETUNREACH), and the scheduled task
+  // only relaunches us once — exiting here once left the wall dead for three days.
+  // Only a 401 is terminal: a bad token can never fix itself, retrying would
+  // hammer the controller and hide the need to re-pair.
   let layout;
-  try {
-    layout = await client.getLayout();
-  } catch (err) {
-    if (err instanceof NanoleafHttpError && err.status === 401) {
-      console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
-      process.exit(EXIT_REPAIR_NEEDED);
+  for (let delay = 5000; !layout; delay = Math.min(delay * 2, 60000)) {
+    try {
+      layout = await client.getLayout();
+    } catch (err) {
+      if (err instanceof NanoleafHttpError && err.status === 401) {
+        console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
+        process.exit(EXIT_REPAIR_NEEDED);
+      }
+      setStatus(`Nanoleaf unreachable (${err.message}) — retrying in ${delay / 1000}s`, true);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    throw err; // transient (controller offline) → exit 1, service manager retries
   }
-  const panels = prepareLayout(layout.positionData);
-  log.info(`nanoleaf ready: ${panels.length} panels, ${cfg.nanoleaf.fps} fps when playing`);
+  // The layout must be rotated by MINUS globalOrientation to match the physical
+  // wall (verified against the wall itself; the API's angle is the app's view
+  // rotation, not a transform to apply).
+  const orientation = -(await client.getGlobalOrientation());
+  const panels = prepareLayout(layout.positionData, orientation);
+  if (orientation) log.info(`layout rotated ${orientation}° to match the wall (globalOrientation)`);
+  const fps = cfg.visuals.fps ?? cfg.nanoleaf.fps; // visuals.fps is the live lever; nanoleaf.fps the legacy default
+  log.info(`nanoleaf ready: ${panels.length} panels, ${fps} fps when playing`);
 
-  const streamer = new Streamer({ host: cfg.nanoleaf.host, fps: cfg.nanoleaf.fps });
+  const streamer = new Streamer({ host: cfg.nanoleaf.host, fps });
   const source = createSource(cfg.audio);
   renderer = new VisualRenderer({
     source,
     streamer,
     client,
     layout: panels,
+    rawLayout: layout.positionData,
+    baseOrientation: orientation,
+    panelSide: layout.sideLength,
     config: cfg.visuals,
-    fps: cfg.nanoleaf.fps,
+    fps,
+    idleEffect: cfg.nanoleaf.idleEffect,
     onStatus: setStatus,
   });
 
@@ -208,6 +268,7 @@ async function runService(configFile) {
       port: cfg.control.port,
       host: cfg.control.host,
       frameHz: cfg.control.frameHz,
+      getArt: () => latestArt,
       // Persist live changes so they survive a restart. Best-effort; the server swallows errors.
       onChange: () => config.save(configFile, cfg),
     });

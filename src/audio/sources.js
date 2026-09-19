@@ -92,16 +92,36 @@ class CaptureSource extends EventEmitter {
       '-f', 's16le', '-',
     ];
     log.info(`spawning: ${this.cfg.captureCommand} ${args.join(' ')}`);
+    const spawnedAt = Date.now();
     this.child = spawn(this.cfg.captureCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     this.emit('format', { sampleRate: this.cfg.sampleRate, channels: this.cfg.channels });
     this.child.stdout.on('data', (chunk) => this.emit('pcm', chunk));
-    this.child.stderr.on('data', (d) => log.warn('capture:', d.toString().trim()));
+    this.child.stderr.on('data', (d) => {
+      const line = d.toString().trim();
+      // The VB-Cable dshow device emits this warning continuously (hundreds of
+      // thousands of lines per day) — count instead of logging each one.
+      if (line.includes('non monotonically increasing dts')) {
+        this._dtsCount = (this._dtsCount || 0) + 1;
+        if (!this._dtsLoggedAt || Date.now() - this._dtsLoggedAt > 60000) {
+          log.warn(`capture: ${this._dtsCount} dts warnings suppressed since last report`);
+          this._dtsLoggedAt = Date.now();
+          this._dtsCount = 0;
+        }
+        return;
+      }
+      log.warn('capture:', line);
+    });
     this.child.on('error', (err) => this.emit('error', err));
     this.child.on('exit', (code) => {
       this.child = null;
       if (this.stopped) return;
-      log.warn(`capture process exited (${code}), restarting in 3 s`);
-      this.restartTimer = setTimeout(() => this.start(), 3000);
+      // A dshow device that can't open makes ffmpeg exit within ~50 ms; a fixed 3 s
+      // retry then spawn-storms for hours (43k spawns in one logged weekend). Back off
+      // exponentially on fast exits, reset once a spawn survives a while.
+      const fastExit = Date.now() - spawnedAt < 5000;
+      this.backoffMs = fastExit ? Math.min((this.backoffMs || 1500) * 2, 60000) : 3000;
+      log.warn(`capture process exited (${code}), restarting in ${this.backoffMs / 1000} s`);
+      this.restartTimer = setTimeout(() => this.start(), this.backoffMs);
     });
   }
 
