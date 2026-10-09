@@ -37,7 +37,7 @@ function fakeClient({ effect = 'Vintage Modern', power = false, brightness = 100
   };
 }
 
-function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs = 100000, idleEffect } = {}) {
+function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs = 100000, effectPollEvery = 1, idleEffect } = {}) {
   const source = new EventEmitter();
   const streamer = { frames: [], blackouts: [], paused: 0, sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); }, pause() { this.paused++; } };
   const renderer = new VisualRenderer({
@@ -47,6 +47,7 @@ function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs =
     fps: 30,
     releaseDebounceMs,
     extControlKeepaliveMs, // large by default so it doesn't perturb other tests
+    effectPollEvery,       // 1 = check the effect on every keepalive tick (production: every 2nd)
     idleEffect,
     rng: () => 0.42,
   });
@@ -205,6 +206,21 @@ test('keepalive does NOT re-assert extControl while still streaming (no periodic
   await sleep(70); // several keepalive ticks
   const after = client.calls.filter((c) => c === 'enableExtControl').length;
   assert.equal(after, atAcquire, 'no re-assert while the controller still reports *Dynamic*');
+  renderer.stop();
+});
+
+test('keepalive polls brightness every tick but the slow effect GET only every Nth', async () => {
+  const client = fakeClient({ effect: '*Dynamic*', power: true });
+  const { renderer } = make({ client, extControlKeepaliveMs: 15, effectPollEvery: 3 });
+  renderer.start();
+  await renderer.acquire();
+  const count = (name) => client.calls.filter((c) => c === name).length;
+  const base = { eff: count('getSelectedEffect'), bri: count('getBrightness') };
+  await sleep(110); // ~6-7 ticks on a 15 ms interval
+  const eff = count('getSelectedEffect') - base.eff;
+  const bri = count('getBrightness') - base.bri;
+  assert.ok(bri >= 4, `brightness polled every tick, got ${bri}`);
+  assert.ok(eff >= 1 && eff <= Math.ceil(bri / 3) + 1, `effect polled every 3rd tick: ${eff} of ${bri}`);
   renderer.stop();
 });
 

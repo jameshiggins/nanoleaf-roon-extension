@@ -87,6 +87,33 @@ test('renders frames from loud audio, all panels addressed', () => {
   assert.ok(bright > 10, `loud audio should light panels, got ${bright}`);
 });
 
+test('transition lever stamps every streamed panel (1 = 100 ms fade by default, 0 = snap)', () => {
+  const { renderer, streamer } = make();
+  renderer.rotate(true);
+  renderer.renderFrame();
+  assert.ok(streamer.frames.at(-1).every((p) => p.transition === 1), 'default fade of 1');
+  assert.equal(renderer.setOption('transition', 0).ok, true);
+  renderer.renderFrame();
+  assert.ok(streamer.frames.at(-1).every((p) => p.transition === 0), 'snap after setting 0');
+  assert.equal(renderer.setOption('transition', 2).ok, true);
+  renderer.renderFrame();
+  assert.ok(streamer.frames.at(-1).every((p) => p.transition === 2));
+});
+
+test('frame timer is drift-corrected: the average rate matches the fps lever on a coarse clock', async () => {
+  // A plain setInterval(50) on Windows fires every 62.5 ms (15.6 ms clock) → 16 fps, not 20.
+  const source = new EventEmitter();
+  const streamer = fakeStreamer();
+  const renderer = new VisualRenderer({ source, streamer, layout: LAYOUT, config: { ...BASE_CFG }, fps: 20, rng: () => 0.42 });
+  renderer.start();
+  await renderer.acquire(); // no client → arms the frame timer directly
+  await new Promise((r) => setTimeout(r, 1200));
+  renderer.stop();
+  const n = streamer.frames.length;
+  assert.ok(n >= 21 && n <= 27, `expected ~24 frames in 1.2 s at 20 fps, got ${n}`);
+  assert.equal(renderer.getState().fps, 20);
+});
+
 test('rotateLayout lever re-rotates the layout and rebuilds the live visual', () => {
   const source = new EventEmitter();
   const streamer = fakeStreamer();

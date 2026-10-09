@@ -15,7 +15,7 @@ const CFG = {
   gain: 1, attackMs: 5, releaseMs: 180, silenceFloor: 0.02, flashStrength: 0.5, brightness: 1, rotateLayout: 0, onsetSensitivity: 1.1,
   albumColors: true, albumSat: 0.9, albumVal: 1, albumMaxColors: 10,
   albumPredominantChance: 0.33, albumPredominantCount: 4, albumMixEvery: 0,
-  releaseDebounceMs: 5000, extControlKeepaliveMs: 4000,
+  releaseDebounceMs: 5000, extControlKeepaliveMs: 4000, transition: 1,
 };
 
 function makeRenderer() {
@@ -51,6 +51,18 @@ test('applyCommand: set drives any visuals lever, validates, rejects unknown', (
   // album lever stored (applies next track)
   assert.equal(applyCommand(r, { cmd: 'set', key: 'albumMaxColors', value: 6 }).ok, true);
   assert.equal(r.config.albumMaxColors, 6);
+});
+
+test('applyCommand: fps is capped for Light Panels; transition and keepalive are live levers', () => {
+  const r = makeRenderer();
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'fps', value: 60 }).ok, false, 'above the cap');
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'fps', value: 20 }).ok, true);
+  assert.equal(r.fps, 20);
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'transition', value: 0 }).ok, true);
+  assert.equal(r.config.transition, 0);
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'transition', value: 9 }).ok, false);
+  assert.equal(applyCommand(r, { cmd: 'set', key: 'extControlKeepaliveMs', value: 30000 }).ok, true);
+  assert.equal(r.extControlKeepaliveMs, 30000, 'keepalive cadence applied live, not just stored');
 });
 
 test('applyCommand: next / lock / unlock / gain', () => {

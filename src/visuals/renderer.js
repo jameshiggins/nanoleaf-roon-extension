@@ -24,7 +24,7 @@ const { FeatureExtractor } = require('../dsp/features');
 const { generatePalettes, resolvePalette, previewColors, CURATED } = require('./palettes');
 const { visualNames, describeVisuals, createVisual } = require('./visualizers');
 const { ShuffleBag, filterNames } = require('./shuffle');
-const { VISUALS_LEVERS, validateLever } = require('../config');
+const { VISUALS_LEVERS, validateLever, DEFAULTS } = require('../config');
 const { prepareLayout } = require('./layout');
 const log = require('../log')('visuals');
 
@@ -151,6 +151,15 @@ class VisualRenderer extends EventEmitter {
     this._reconcilePromise = Promise.resolve();
     this._releaseTimer = null;
     this._extControlTimer = null;
+    // Controller polling cadence inside the keepalive: brightness (cheap) every tick, the
+    // selected effect (~100 ms on an NL22, and the call most likely to hitch the LED path)
+    // only every Nth tick. Tests pass 1 to poll both every tick.
+    this.effectPollEvery = Math.max(1, Math.floor(opts.effectPollEvery ?? 2));
+    this._keepaliveTick = 0;
+    // Measured frame cadence (see _armRenderTimer): on Windows' 15.6 ms timer clock the fps
+    // lever is a target, not a promise, so the real rate is tracked and shown in getState().
+    this._tick = { intervals: [], lastAt: null, lastReportAt: 0 };
+    this.fpsReal = null;
 
     this._onFormat = (fmt) => this.features.setFormat(fmt);
     this._onPcm = (chunk) => this.features.onChunk(chunk);
@@ -169,11 +178,10 @@ class VisualRenderer extends EventEmitter {
 
   stop() {
     this.started = false;
-    clearInterval(this.renderTimer);
+    this._disarmRenderTimer();
     clearInterval(this.rotateTimer);
     clearTimeout(this._releaseTimer);
     this._stopExtControlKeepalive();
-    this.renderTimer = null;
     this.rotateTimer = null;
     this._releaseTimer = null;
     this.acquired = false;   // reset ownership so a reused renderer can re-acquire cleanly
@@ -289,17 +297,14 @@ class VisualRenderer extends EventEmitter {
       }
     }
     this.acquired = true;
-    if (!this.renderTimer) this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
+    this._armRenderTimer();
     this._startExtControlKeepalive();
     log.info('acquired: streaming to panels');
     this.emit('state', this.getState());
   }
 
   async _exitAcquired() {
-    if (this.renderTimer) {
-      clearInterval(this.renderTimer);
-      this.renderTimer = null;
-    }
+    this._disarmRenderTimer();
     // Otherwise the first frame of the next session logs the whole released window
     // as a bogus multi-minute "render stall".
     this._lastFrameAt = null;
@@ -335,23 +340,79 @@ class VisualRenderer extends EventEmitter {
   }
 
   /**
+   * Frame timer: a drift-corrected setTimeout chain rather than setInterval. On Windows,
+   * Node's timers tick on the 15.6 ms system clock (nothing here calls timeBeginPeriod), so
+   * a plain interval of 1000/fps rounds every tick up — "20 fps" ran at 16, "30" at 22.
+   * Scheduling each tick against an ideal grid lets a late tick shorten the next wait, so the
+   * average rate matches the lever even though single ticks still land on the coarse clock.
+   * After a stall the grid is re-based instead of burst-firing the missed frames.
+   */
+  _armRenderTimer() {
+    if (this.renderTimer) return;
+    const period = 1000 / this.fps;
+    let nextAt = performance.now() + period;
+    const tick = () => {
+      if (!this.renderTimer) return; // disarmed while this tick was pending
+      this._noteTick();
+      this.renderFrame();
+      const now = performance.now();
+      nextAt += period;
+      if (nextAt < now - period) nextAt = now + period; // stalled: don't catch up in a burst
+      this.renderTimer = setTimeout(tick, Math.max(0, nextAt - now));
+    };
+    this.renderTimer = setTimeout(tick, period);
+  }
+
+  _disarmRenderTimer() {
+    if (this.renderTimer) clearTimeout(this.renderTimer);
+    this.renderTimer = null;
+    this._tick.lastAt = null;
+  }
+
+  /** Track real tick spacing; once a minute log it and refresh `fpsReal` for the app. */
+  _noteTick() {
+    const t = performance.now();
+    const s = this._tick;
+    if (s.lastAt != null) {
+      s.intervals.push(t - s.lastAt);
+      if (s.intervals.length > 1200) s.intervals.splice(0, s.intervals.length - 1200);
+    }
+    s.lastAt = t;
+    if (t - s.lastReportAt < 60000) return;
+    s.lastReportAt = t;
+    if (s.intervals.length < 10) return;
+    const sorted = [...s.intervals].sort((a, b) => a - b);
+    const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
+    const pick = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+    this.fpsReal = Math.round((1000 / mean) * 10) / 10;
+    log.info(`frame timer: ${this.fpsReal} fps real (target ${this.fps}) — tick p50 ${pick(0.5).toFixed(1)} ms, p99 ${pick(0.99).toFixed(1)} ms, max ${sorted[sorted.length - 1].toFixed(1)} ms`);
+    s.intervals.length = 0;
+    this.emit('state', this.getState());
+  }
+
+  /**
    * Re-assert extControl on an interval so the visuals reclaim the panels if anything else
    * takes them (a scene picked in the Nanoleaf app, a schedule) — the controller silently
    * leaves streaming mode and ignores our frames until we re-enter it.
    */
   _startExtControlKeepalive() {
     if (this._extControlTimer || !this.client) return;
+    this._keepaliveTick = 0; // first tick after (re)arming always checks the effect
     this._extControlTimer = setInterval(async () => {
       if (!this.acquired || this._keepaliveInFlight) return;
       this._keepaliveInFlight = true;
+      const tick = this._keepaliveTick++;
       try {
         // Only re-assert when the controller has actually left extControl (someone set a
         // scene / a schedule fired). Re-asserting unconditionally every tick can hitch the
-        // panels mid-stream — a cheap GET here avoids that while still reclaiming fast.
-        const sel = await this.client.getSelectedEffect();
-        if (this.acquired && sel !== '*Dynamic*') {
-          await this.client.enableExtControl();
-          log.info('extControl reclaimed — panels had been set to a scene');
+        // panels mid-stream. The effect GET is itself the controller's slow call (~100 ms
+        // on an NL22), so it runs only every `effectPollEvery` ticks.
+        if (tick % this.effectPollEvery === 0) {
+          const sel = await this.client.getSelectedEffect();
+          if (this.acquired && sel !== '*Dynamic*') {
+            await this.client.enableExtControl();
+            log.info('extControl reclaimed — panels had been set to a scene');
+          }
         }
         // Same for brightness: a Nanoleaf app schedule dimming the controller mid-play
         // scales our frames toward black. Reclaim full brightness while streaming.
@@ -482,11 +543,12 @@ class VisualRenderer extends EventEmitter {
         p.b *= bright;
       }
     }
-    // 100 ms hardware fade per frame (extControl transition is in 100 ms units).
-    // The controller interpolates toward each new frame instead of snapping, so
-    // frames that arrive clumped by WiFi jitter blend instead of stuttering.
-    // Costs a little beat sharpness; drop back to 0 for instant-apply.
-    for (const p of frame) p.transition = 1;
+    // Hardware fade per frame (extControl transition, 100 ms units) — the `transition`
+    // lever. 1 pairs with the 10 Hz rate Nanoleaf designed the fade for: the controller
+    // glides between frames instead of snapping. 0 = instant apply (sharper beats, but any
+    // delivery gap then reads as freeze-then-snap instead of a glide).
+    const fade = Math.max(0, Math.round(this.config.transition ?? 1));
+    for (const p of frame) p.transition = fade;
     this.streamer.sendFrame(frame);
     if (this.listenerCount('frame') > 0) this.emit('frame', frame, f, this.gate);
     return frame;
@@ -527,6 +589,8 @@ class VisualRenderer extends EventEmitter {
       panels: this.layout.length,
       acquired: this.acquired,
       warning: this.warning,
+      fps: this.fps,
+      fpsReal: this.fpsReal, // measured over the last minute of streaming; null until then
     };
   }
 
@@ -637,7 +701,9 @@ class VisualRenderer extends EventEmitter {
   /** Current value of every live-settable visuals lever (for the companion menu). */
   getOptions() {
     const out = {};
-    for (const key of Object.keys(VISUALS_LEVERS)) out[key] = this.config[key];
+    // A config block handed in without a newer lever (tests, older callers) still reports
+    // the default the renderer actually uses for it, so the menu never shows a hole.
+    for (const key of Object.keys(VISUALS_LEVERS)) out[key] = this.config[key] ?? DEFAULTS.visuals[key];
     return out;
   }
 
@@ -656,11 +722,22 @@ class VisualRenderer extends EventEmitter {
         // Re-arm the frame timer and the streamer's send budget at the new rate.
         this.config.fps = value;
         this.fps = value;
+        this.fpsReal = null; // stale until a minute at the new rate has been measured
+        this._tick.intervals.length = 0;
         if (this.renderTimer) {
-          clearInterval(this.renderTimer);
-          this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
+          this._disarmRenderTimer();
+          this._armRenderTimer();
         }
         if (this.streamer) this.streamer.intervalMs = 1000 / value;
+        break;
+      }
+      case 'keepalive': {
+        this.config.extControlKeepaliveMs = value;
+        this.extControlKeepaliveMs = value;
+        if (this._extControlTimer) { // mid-stream: re-arm at the new cadence
+          this._stopExtControlKeepalive();
+          this._startExtControlKeepalive();
+        }
         break;
       }
       case 'palette': {

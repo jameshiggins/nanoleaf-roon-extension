@@ -46,7 +46,7 @@ for the process lifetime.
 | `src/visuals/visualizers.js` | 11 parametric engines × variant grid → 28 named visualizers (the pulse family was cut); `createVisual`, `describeVisuals` | palettes |
 | `src/visuals/layout.js` | `prepareLayout()`: panel positions → normalized nx/ny, left→right, drop pseudo-panel | — |
 | `src/visuals/shuffle.js` | `ShuffleBag` (no-repeat rotation) + `filterNames` (include/exclude) | — |
-| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer; panel ownership (`acquire`/`release`/`releaseNow` via a single-flight `_reconcile`, debounced release, extControl keepalive) | features, visualizers, palettes, shuffle |
+| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer on a drift-corrected fps timer (measured rate in `getState().fpsReal`); silence gate; rotation on track change/timer; panel ownership (`acquire`/`release`/`releaseNow` via a single-flight `_reconcile`, debounced release, extControl keepalive) | features, visualizers, palettes, shuffle |
 | `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `setPower`, `getPower`, `getSelectedEffect`, `selectEffect`, `identify` | http |
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
+const os = require('node:os');
 const config = require('./config');
 const { NanoleafClient, NanoleafHttpError } = require('./nanoleaf/client');
 const { Streamer } = require('./nanoleaf/streamer');
@@ -76,9 +77,17 @@ function listVisuals() {
 }
 
 async function runService(configFile) {
+  // The render loop shares this box with whatever else runs on it (a DAW, builds). Raise our
+  // own priority here rather than relying on run.cmd's delayed bump (Task Scheduler starts
+  // tasks BelowNormal by default).
+  try {
+    os.setPriority(os.constants.priority.PRIORITY_ABOVE_NORMAL);
+  } catch (err) {
+    log.debug(`could not raise process priority: ${err.message}`);
+  }
   let cfg;
   try {
-    cfg = config.load(configFile);
+    cfg = config.load(configFile, { warn: (m) => log.warn(m) });
   } catch (err) {
     console.error(err.message);
     process.exit(EXIT_CONFIG);
@@ -248,8 +257,8 @@ async function runService(configFile) {
   const orientation = -(await client.getGlobalOrientation());
   const panels = prepareLayout(layout.positionData, orientation);
   if (orientation) log.info(`layout rotated ${orientation}° to match the wall (globalOrientation)`);
-  const fps = cfg.visuals.fps ?? cfg.nanoleaf.fps; // visuals.fps is the live lever; nanoleaf.fps the legacy default
-  log.info(`nanoleaf ready: ${panels.length} panels, ${fps} fps when playing`);
+  const fps = cfg.visuals.fps; // the live lever (nanoleaf.fps is legacy and ignored)
+  log.info(`nanoleaf ready: ${panels.length} panels, ${fps} fps when playing (visuals.fps; Light Panels are rated for 10 Hz)`);
 
   const streamer = new Streamer({ host: cfg.nanoleaf.host, fps });
   const source = createSource(cfg.audio);
@@ -305,12 +314,34 @@ async function runService(configFile) {
     }
   }
 
+  // LAN discovery beacon: the Android app broadcasts a probe and we answer with where the
+  // companion app lives, so nobody has to type (or re-type, after a DHCP move) this PC's IP.
+  let beacon = null;
+  const loopbackOnly = /^(127\.|localhost$|::1$)/.test(cfg.control.host);
+  if (control && cfg.control.discoveryPort > 0 && !loopbackOnly) {
+    const { Beacon } = require('./control/beacon');
+    beacon = new Beacon({
+      port: cfg.control.discoveryPort,
+      servicePort: control.server.address().port,
+      version: require('../package.json').version,
+    });
+    try {
+      await beacon.start();
+    } catch (err) {
+      log.warn(`discovery beacon failed to start (the app will need the URL typed in): ${err.message}`);
+      beacon = null;
+    }
+  } else if (control && cfg.control.discoveryPort > 0) {
+    log.info('discovery beacon off: control.host is loopback-only, so there is nothing for other devices to find');
+  }
+
   let shuttingDown = false;
   const shutdown = async (code = 0) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down');
     source.stop();
+    if (beacon) beacon.stop();
     if (control) control.stop();
     // Hand the panels back before exiting, rather than leaving them stuck in extControl.
     try { await renderer.releaseNow(); } catch (err) { log.error(`shutdown: ${err.message}`); }

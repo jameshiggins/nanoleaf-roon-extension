@@ -60,8 +60,9 @@ hundreds). 28 visualizers × 36 palettes ≈ **1,000+ distinct looks** in rotati
 
 ```json
 {
-  "nanoleaf": { "fps": 30 },
   "visuals": {
+    "fps": 10,              // panel frame rate (10–20; Light Panels are rated for 10 Hz)
+    "transition": 1,        // per-frame hardware fade in 100 ms units (0 = snap)
     "include": [],          // limit rotation to these visualizers; empty = all
     "exclude": [],          // skip specific visualizers
     "palettes": 36,         // how many palettes to generate (>= 1)

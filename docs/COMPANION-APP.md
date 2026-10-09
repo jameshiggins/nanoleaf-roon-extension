@@ -29,7 +29,8 @@ It's on by default. Config (`config.json`):
     "enabled": true,
     "port": 8787,
     "host": "0.0.0.0",   // 127.0.0.1 to keep it off the LAN
-    "frameHz": 20        // telemetry frame rate pushed to the app
+    "frameHz": 20,       // telemetry frame rate pushed to the app
+    "discoveryPort": 8788 // UDP beacon the Android app uses to find this host; 0 = off
   }
 }
 ```
@@ -39,6 +40,15 @@ On startup the extension logs the exact URL(s) to open, e.g.
 "extension IP" is just the LAN address of the machine you run `npm start` on (not the Nanoleaf,
 not the Shield). If you need to find it yourself: `hostname -I` (Linux/Pi),
 `ipconfig getifaddr en0` (macOS), `ipconfig` → IPv4 (Windows), or the router's client list.
+
+**You should not need that IP for the native app.** Alongside the HTTP server the extension
+runs a tiny discovery beacon (`src/control/beacon.js`, `control.discoveryPort`, UDP 8788): the
+Android app broadcasts `NANOLEAF-ROON? <nonce>` on the LAN, the beacon answers
+`NANOLEAF-ROON {"service":"nanoleaf-roon","port":8787,...}`, and the app loads the address the
+reply came from. So when DHCP moves the PC (Wi-Fi ↔ Ethernet, lease change) the app follows it
+on its next launch — nothing to retype. The beacon only runs when `control.host` is not
+loopback-only. On Windows, allow inbound **TCP 8787 and UDP 8788** to `node.exe` for the
+Private profile, or neither the app nor its scan will get through the firewall.
 
 > No authentication — this is meant for a trusted home LAN. Bind to `127.0.0.1` (and use the
 > native app on the same machine, or an SSH tunnel) if that's a concern.
@@ -61,8 +71,9 @@ on every change and publishes it to a release. Two ways to get it onto the Shiel
    **Settings → Device Preferences → Security → Install unknown apps**, allow Downloader.
 2. In Downloader, open this URL:
    **`https://github.com/jameshiggins/nanoleaf-roon-android/releases/download/latest/nanoleaf-roon-visualizer.apk`**
-3. It downloads and offers to install. Open it; on first launch enter the extension URL the
-   extension logged (e.g. `http://192.168.50.42:8787`). Long-press **Menu** to change it later.
+3. It downloads and offers to install. Open it: it finds the extension by broadcast and connects
+   on its own. If nothing answers (firewall, different subnet) it falls back to the last address
+   that worked and finally asks; long-press **Menu** any time to rescan or type a URL.
 
 The app then appears in the Shield's **Apps** row.
 

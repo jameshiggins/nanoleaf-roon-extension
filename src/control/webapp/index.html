@@ -130,10 +130,17 @@
   .seg .opt.on { background: rgba(var(--accent), .22); color: var(--ink); }
   .h2hint.btn-ish { cursor: pointer; color: rgb(var(--accent)); }
   .h2hint.btn-ish:active { opacity: .6; }
+  /* a card header's right-hand cluster: hint + bulk actions (only the cluster takes the auto margin) */
+  .card h2 .h2acts { margin-left: auto; display: flex; align-items: baseline; gap: 12px; }
+  .card h2 .h2acts .h2hint { margin-left: 0; }
+  /* bulk pick links on the palette groups */
+  .subact { margin-left: auto; font-size: 10.5px; font-weight: 500; letter-spacing: .02em; text-transform: none;
+    color: rgb(var(--accent)); cursor: pointer; white-space: nowrap; }
+  .subact:active { opacity: .6; }
 
   /* palette grid: cards with true swatch bars */
   .subhead { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
-    font-weight: 650; margin: 2px 0 9px; }
+    font-weight: 650; margin: 2px 0 9px; display: flex; align-items: baseline; gap: 10px; }
   .palgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-bottom: 4px; }
   .pal { min-width: 0; border-radius: 13px; padding: 6px 6px 7px; cursor: pointer; user-select: none; -webkit-user-select: none;
     background: rgba(255,255,255,.05); border: 1.5px solid var(--card-brd);
@@ -149,6 +156,8 @@
   #genWrap > summary .chev { transition: transform .2s; margin-left: auto; }
   #genWrap[open] > summary .chev { transform: rotate(180deg); }
   #genWrap[open] > summary { margin-bottom: 9px; }
+  #genWrap > summary .subact { margin-left: auto; }
+  #genWrap > summary .chev { margin-left: 0; }
 
   /* scene chips: on/off membership + playing highlight */
   .chip.scene::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
@@ -217,6 +226,7 @@
   body.tv #meter { height: 34px; }
   body.tv .card h2 { font-size: 13px; }
   body.tv .card h2 .h2hint { font-size: 12px; }
+  body.tv .subact { font-size: 12px; }
   body.tv .act { font-size: 15px; padding: 15px 10px; }
   body.tv .act .ico { font-size: 25px; }
   body.tv .chip { font-size: 15px; padding: 10px 15px; }
@@ -277,7 +287,7 @@
   </section>
 
   <section class="card">
-    <h2>Scenes <span class="h2hint">tap = on/off · hold = play</span></h2>
+    <h2>Scenes <span class="h2acts"><span class="h2hint">tap = on/off · hold = play</span><span class="h2hint btn-ish" id="scenesAll">all on</span><span class="h2hint btn-ish" id="scenesSolo">solo</span></span></h2>
     <div class="seg" id="rotSeg">
       <div class="opt" data-rot="off">Pinned</div>
       <div class="opt" data-rot="track">Per track</div>
@@ -291,17 +301,17 @@
   </section>
 
   <section class="card">
-    <h2>Color <span class="h2hint btn-ish" id="diceBtn">🎲 random palette</span></h2>
+    <h2>Color <span class="h2acts"><span class="h2hint btn-ish" id="diceBtn">🎲 random palette</span><span class="h2hint btn-ish" id="unpinBtn">unpin all</span></span></h2>
     <div class="seg" id="palSeg">
       <div class="opt" data-pal="album">Album</div>
       <div class="opt" data-pal="mix">Mix</div>
       <div class="opt" data-pal="pinned">Pinned</div>
       <div class="opt" data-pal="shuffle">Shuffle</div>
     </div>
-    <div class="subhead">Presets</div>
+    <div class="subhead">Presets <span class="subact" id="pinPresets">pin all</span></div>
     <div class="palgrid" id="palPresets"></div>
     <details id="genWrap">
-      <summary class="subhead more">All palettes <span id="genCount"></span> <span class="chev">▾</span></summary>
+      <summary class="subhead more">All palettes <span id="genCount"></span> <span class="subact" id="pinGen">pin all</span> <span class="chev">▾</span></summary>
       <div class="palgrid" id="palGen"></div>
     </details>
   </section>
@@ -332,8 +342,16 @@
 
   <details class="card">
     <summary>Advanced <span class="chev">▾</span></summary>
-    <div class="slider" data-key="fps" data-min="10" data-max="60" data-step="5" data-fmt="fps">
-      <div class="slabel"><span class="k">Panel FPS <span class="hint">higher = lower latency</span></span><span class="v"></span></div>
+    <div class="slider" data-key="fps" data-min="10" data-max="20" data-step="1" data-fmt="fps">
+      <div class="slabel"><span class="k">Panel FPS <span class="hint">Light Panels are rated for 10</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="transition" data-min="0" data-max="3" data-step="1" data-fmt="fade">
+      <div class="slabel"><span class="k">Panel fade <span class="hint">hardware blend between frames</span></span><span class="v"></span></div>
+      <input type="range" />
+    </div>
+    <div class="slider" data-key="extControlKeepaliveMs" data-min="2000" data-max="60000" data-step="1000" data-fmt="secms">
+      <div class="slabel"><span class="k">Controller check <span class="hint">how often to reclaim scenes / dimming</span></span><span class="v"></span></div>
       <input type="range" />
     </div>
     <div class="slider" data-key="silenceFloor" data-min="0" data-max="0.1" data-step="0.005" data-fmt="raw3">
@@ -633,7 +651,7 @@
     wallBadge.textContent = state.warning
       ? "⚠ no audio from Roon"
       : state.acquired
-        ? "live · " + (state.panels || catalogue.layout.length) + " panels"
+        ? "live · " + (state.panels || catalogue.layout.length) + " panels" + (state.fpsReal ? " · " + state.fpsReal + " fps" : "")
         : "idle — wall on scene";
     wallBadge.classList.toggle("live", !!state.acquired);
     autoBtn.classList.toggle("on", !state.locked);
@@ -800,6 +818,25 @@
       setLever("exclude", excludeList());
     });
   }
+  // bulk membership: every scene on, or solo — only `keep` stays (the pool can't be empty)
+  function setAllScenes(on, keep) {
+    Object.keys(sceneEnabled).forEach(function (n) { sceneEnabled[n] = on || n === keep; });
+    highlightScene();
+    return setLever("exclude", excludeList());
+  }
+  $("#scenesAll").addEventListener("click", function () {
+    buzz();
+    setAllScenes(true);
+    toast("✓ all " + Object.keys(sceneEnabled).length + " scenes on");
+  });
+  $("#scenesSolo").addEventListener("click", function () {
+    var keep = sceneEnabled.hasOwnProperty(state.visual) ? state.visual
+             : Object.keys(sceneEnabled).filter(function (n) { return sceneEnabled[n]; })[0];
+    if (!keep) return;
+    buzz();
+    setAllScenes(false, keep);
+    toast("solo — only " + keep + " stays on");
+  });
 
   function buildPalettes() {
     palPresets.innerHTML = ""; palGen.innerHTML = "";
@@ -835,6 +872,39 @@
     genCount.textContent = gen ? "(" + gen + ")" : "";
     highlightPalette();
   }
+  // bulk pins: add a whole group to the pin set. From Album/Shuffle this jumps to Pinned
+  // (like tapping one palette does); in Mix it just widens Mix's in-between pool.
+  function pinGroup(curated, label) {
+    var names = catalogue.palettes
+      .filter(function (p) { return typeof p !== "string" && !!p.curated === curated; })
+      .map(function (p) { return p.name; });
+    if (!names.length) return;
+    buzz();
+    var mode = palMode();
+    var pins = (mode === "pinned" || mode === "mix") ? currentPins() : [];
+    names.forEach(function (n) { if (pins.indexOf(n) < 0) pins.push(n); });
+    var wasAlbum = mode === "album";
+    if (wasAlbum) options.albumColors = false;
+    (wasAlbum ? setLever("albumColors", false) : Promise.resolve())
+      .then(function () { return sendPins(pins); })
+      .then(refreshConfig);
+    paintPalSeg();
+    toast("📌 " + names.length + " " + label + " pinned");
+  }
+  $("#pinPresets").addEventListener("click", function () { pinGroup(true, "presets"); });
+  $("#pinGen").addEventListener("click", function (e) {
+    e.preventDefault(); e.stopPropagation(); // it sits in the <summary>: don't toggle the list
+    pinGroup(false, "palettes");
+    $("#genWrap").open = true;
+  });
+  $("#unpinBtn").addEventListener("click", function () {
+    if (!currentPins().length) { toast("nothing pinned"); return; }
+    buzz();
+    options.palette = ""; options.palettePins = [];
+    setLever("palettePins", []).then(function () { return setLever("palette", ""); }).then(refreshConfig);
+    paintPalSeg();
+    toast(options.albumColors ? "pins cleared — Mix draws from every palette" : "pins cleared — shuffling every palette");
+  });
   function highlightPalette() {
     var pins = currentPins();
     // pins drive the highlight in Pinned mode, and in Mix (they're its in-between pool);
@@ -857,6 +927,8 @@
     ms: function (v) { return Math.round(v) + " ms"; },
     sec: function (v) { return Math.round(v) + " s"; },
     fps: function (v) { return Math.round(v) + " fps"; },
+    fade: function (v) { v = Math.round(v); return v ? (v * 100) + " ms" : "snap"; },
+    secms: function (v) { return Math.round(v / 1000) + " s"; },
     nth: function (v) { v = Math.round(v); if (v < 2) return "always";
       return "every " + v + (v === 2 ? "nd" : v === 3 ? "rd" : "th"); },
     deg: function (v) { return Math.round(v) + "°"; },
@@ -989,7 +1061,7 @@
   // phone's press-and-hold); ⏭ shuffles from anywhere.
   var tvFocusEl = null;
   function tvFocusables() {
-    var sel = ".act, .seg .opt, .chip, .pal, .slider, details.card > summary, #genWrap > summary, .h2hint.btn-ish";
+    var sel = ".act, .seg .opt, .chip, .pal, .slider, details.card > summary, #genWrap > summary, .btn-ish, .subact";
     return Array.prototype.filter.call(document.querySelectorAll(sel), function (el) {
       var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; // skips closed <details> + display:none
     });

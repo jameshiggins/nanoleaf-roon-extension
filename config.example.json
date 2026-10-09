@@ -40,7 +40,9 @@
     "silenceFloor": 0.02,
     "onsetSensitivity": 1.1,
     "releaseDebounceMs": 5000,
-    "extControlKeepaliveMs": 4000,
+    "extControlKeepaliveMs": 15000,
+    "fps": 10,
+    "transition": 1,
     "flashStrength": 0.5,
     "albumMaxColors": 10,
     "albumPredominantChance": 0.33,
@@ -50,7 +52,8 @@
     "enabled": true,
     "port": 8787,
     "host": "127.0.0.1",
-    "frameHz": 20
+    "frameHz": 20,
+    "discoveryPort": 8788
   },
   "shield": {
     "enabled": false,
