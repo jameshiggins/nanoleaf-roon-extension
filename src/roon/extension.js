@@ -120,6 +120,30 @@ class RoonExtension {
     log.info('Roon discovery started — enable the extension in Roon Settings → Extensions');
   }
 
+  /**
+   * Tear down and re-run Core discovery. Used when the network changed under node-roon-api's
+   * SOOD sockets (see neterr.js) — the pairing itself survives, only discovery is rebuilt.
+   * Coalesces bursts: one restart per `delayMs` window.
+   */
+  restartDiscovery(delayMs = 3000) {
+    if (!this.roon || this._discoveryRestart) return;
+    this._discoveryRestart = setTimeout(() => {
+      this._discoveryRestart = null;
+      try {
+        this.roon.stop_discovery();
+        // node-roon-api 1.2.3: Sood.stop() clears its interface re-scan timer but leaves the
+        // handle set, so a later start() never re-arms it. Reset it so interface changes
+        // keep being noticed after a restart.
+        if (this.roon._sood) this.roon._sood.interface_timer = null;
+        this.roon.start_discovery();
+        log.info('Roon discovery restarted after a network change');
+      } catch (err) {
+        log.warn(`could not restart Roon discovery: ${err.message}`);
+      }
+    }, delayMs);
+    if (typeof this._discoveryRestart.unref === 'function') this._discoveryRestart.unref();
+  }
+
   /** Show a status line in Roon's extension list. No-op when Roon is disabled. */
   setStatus(message, isError = false) {
     if (this.status) this.status.set_status(message, isError);

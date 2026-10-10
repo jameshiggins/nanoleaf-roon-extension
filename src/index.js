@@ -11,6 +11,7 @@ const { prepareLayout } = require('./visuals/layout');
 const { VisualRenderer } = require('./visuals/renderer');
 const { describeVisuals } = require('./visuals/visualizers');
 const { generatePalettes } = require('./visuals/palettes');
+const { isTransientNetworkError } = require('./roon/neterr');
 const log = require('./log')('main');
 
 const EXIT_CONFIG = 2;
@@ -377,7 +378,18 @@ async function runService(configFile) {
   process.on('SIGTERM', () => shutdown(0));
   // A crash must still restore the panels rather than leave them frozen in extControl;
   // route through the same shutdown, then exit non-zero so the service manager restarts.
-  process.on('uncaughtException', (err) => { log.error(`uncaughtException: ${(err && err.stack) || err}`); shutdown(1); });
+  // Exception: the network changing under a discovery socket (router reboot, DHCP renew)
+  // is not a crash — rebuild discovery and carry on (2026-10-10: the weekly 03:00 router
+  // reboot took the service down this way and nothing restarted it).
+  process.on('uncaughtException', (err) => {
+    if (isTransientNetworkError(err)) {
+      log.warn(`network changed under a socket (${err.message}) — restarting Roon discovery, service stays up`);
+      if (roon) roon.restartDiscovery();
+      return;
+    }
+    log.error(`uncaughtException: ${(err && err.stack) || err}`);
+    shutdown(1);
+  });
   process.on('unhandledRejection', (err) => { log.error(`unhandledRejection: ${(err && err.stack) || err}`); shutdown(1); });
 }
 
