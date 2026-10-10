@@ -47,6 +47,12 @@ npm run analyze       # tools/analyze.js track analyzer
   The user's rules, locked by `test/shieldlauncher.test.js`: first play only (never per track, never
   on our own reconnect snapshot), not if the app is already on screen, at most once per 30 min.
   The service runs as SYSTEM, so `shield.adbKey` lends adb the user's already-authorized key.
+- **Hegel hand-back** (`config.json` → `hegel`, code in `src/hegel/inputswitch.js`): the H190
+  (`192.168.50.138`, IP control on TCP 50001) jumps to Network by itself when Roon plays but never
+  leaves it, so once the `hegel.zone` room has been quiet for `idleSeconds` (600 = 10 min, chosen after comparing Hegel auto-standby 15 min, Sonos 10 min, HA community 10–15 min) the service selects
+  `idleInput` 6 = Optical 2 (the TV) — only if the amp is still on `networkInput` 9, so a manually
+  chosen input is never overridden; play resuming inside the window cancels it. Deliberately NOT
+  tied to the Roon Shield app exiting (tried, rejected by the user). Locked by `test/hegelinput.test.js`.
 - Config: `config.json` (see `config.example.json`). `visuals.floor` is the coverage dial
   (all-panels-lit), `visuals.gain` is input level — they are not interchangeable.
 

@@ -199,6 +199,27 @@ async function runService(configFile) {
       shieldWatcher.on('playing', () => { if (!inSnapshot) launcher.onFirstPlay(); });
       log.info(`shield auto-launch on: ${cfg.shield.target}, zone "${cfg.shield.zone || '(any)'}"`);
     }
+    // Hegel hand-back: once the living-room zone has been quiet for hegel.idleSeconds, move the
+    // amp off Network back to the TV's input (only if it is still on Network — see inputswitch.js).
+    // A Subscribed snapshot with nothing playing counts as quiet too, so a service restart during
+    // silence still hands the amp back instead of waiting for the next play/stop cycle.
+    let hegelWatcher = null;
+    let hegel = null;
+    if (cfg.hegel.enabled) {
+      const { HegelInputSwitch } = require('./hegel/inputswitch');
+      hegel = new HegelInputSwitch({
+        host: cfg.hegel.host,
+        port: cfg.hegel.port,
+        idleMs: cfg.hegel.idleSeconds * 1000,
+        idleInput: cfg.hegel.idleInput,
+        networkInput: cfg.hegel.networkInput,
+      });
+      hegelWatcher = new TrackWatcher({ zone: cfg.hegel.zone });
+      hegelWatcher.on('playing', () => hegel.onPlaying());
+      hegelWatcher.on('idle', () => hegel.onIdle());
+      hegelWatcher.on('zones', () => { if (hegelWatcher.playingZones.size === 0) hegel.onIdle(); });
+      log.info(`hegel hand-back on: ${cfg.hegel.host}, zone "${cfg.hegel.zone || '(any)'}", input ${cfg.hegel.idleInput} after ${cfg.hegel.idleSeconds}s quiet`);
+    }
     roon = new RoonExtension({
       onZoneEvent: (response, msg) => {
         watcher.handleEvent(response, msg);
@@ -206,6 +227,7 @@ async function runService(configFile) {
           inSnapshot = response === 'Subscribed';
           try { shieldWatcher.handleEvent(response, msg); } finally { inSnapshot = false; }
         }
+        if (hegelWatcher) hegelWatcher.handleEvent(response, msg);
       },
       onOutputEvent: (response, msg) => feed.handleOutputs(response, msg),
       wantImages: true, // always request the image service so albumColors can toggle live

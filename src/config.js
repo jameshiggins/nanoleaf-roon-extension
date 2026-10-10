@@ -81,6 +81,15 @@ const DEFAULTS = {
     component: 'com.roonshield/.MainActivity',
     cooldownMinutes: 30, // never launch more often than this
   },
+  hegel: {
+    enabled: false,      // hand the Hegel amp back to the TV input once Roon has been quiet
+    host: '',            // the amp's IP (Hegel IP control, TCP 50001)
+    port: 50001,
+    zone: 'Hegel',       // Roon zone to watch (case-insensitive substring)
+    idleSeconds: 600,    // how long the zone must stay quiet before switching (10 min, the common choice)
+    idleInput: 6,        // input to select then — 6 = Optical 2 on the H190 (the TV)
+    networkInput: 9,     // only switch when the amp is still on this input (9 = Network)
+  },
 };
 
 class ConfigError extends Error {}
@@ -193,6 +202,17 @@ function validate(cfg, errors) {
   str(cfg.control.host, 'control.host');
   num(cfg.control.frameHz, 'control.frameHz', 1, 60);
   num(cfg.control.discoveryPort, 'control.discoveryPort', 0, 65535);
+
+  if (typeof cfg.hegel.enabled !== 'boolean') errors.push('hegel.enabled: expected true or false');
+  for (const key of ['host', 'zone']) str(cfg.hegel[key], `hegel.${key}`);
+  num(cfg.hegel.port, 'hegel.port', 1, 65535);
+  num(cfg.hegel.idleSeconds, 'hegel.idleSeconds', 5, 86400);
+  num(cfg.hegel.idleInput, 'hegel.idleInput', 1, 9);
+  num(cfg.hegel.networkInput, 'hegel.networkInput', 1, 9);
+  if (cfg.hegel.enabled === true) {
+    if (cfg.roon.enabled !== true) errors.push('hegel.enabled requires roon.enabled: true (idle events come from Roon)');
+    if (!cfg.hegel.host) errors.push('hegel.enabled requires hegel.host (the amp\'s IP address)');
+  }
 
   if (typeof cfg.shield.enabled !== 'boolean') errors.push('shield.enabled: expected true or false');
   for (const key of ['zone', 'target', 'adb', 'adbKey', 'component']) str(cfg.shield[key], `shield.${key}`);

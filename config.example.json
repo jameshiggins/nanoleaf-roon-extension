@@ -62,5 +62,14 @@
     "adb": "C:\\Android\\platform-tools\\adb.exe",
     "adbKey": "C:\\Users\\you\\.android\\adbkey",
     "cooldownMinutes": 30
+  },
+  "hegel": {
+    "enabled": false,
+    "host": "192.168.1.60",
+    "port": 50001,
+    "zone": "Living Room",
+    "idleSeconds": 600,
+    "idleInput": 6,
+    "networkInput": 9
   }
 }
