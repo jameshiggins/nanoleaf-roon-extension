@@ -102,6 +102,8 @@ async function runService(configFile) {
   // so a Roon outage never darkens the panels — rotation just pauses.
   let roon = null;
   let renderer = null;
+  let hegel = null;          // assigned below inside `if (cfg.roon.enabled)`; referenced in shutdown
+  let hegelShieldFg = null;  // Shield-foreground watcher, same scope story as `hegel`
   let latestArt = null; // { key, body, type } — current track's cover for the companion app
   if (cfg.roon.enabled) {
     const { RoonExtension } = require('./roon/extension');
@@ -205,7 +207,6 @@ async function runService(configFile) {
     // A Subscribed snapshot with nothing playing counts as quiet too, so a service restart during
     // silence still hands the amp back instead of waiting for the next play/stop cycle.
     let hegelWatcher = null;
-    let hegel = null;
     if (cfg.hegel.enabled) {
       const { HegelInputSwitch } = require('./hegel/inputswitch');
       hegel = new HegelInputSwitch({
@@ -216,10 +217,30 @@ async function runService(configFile) {
         networkInput: cfg.hegel.networkInput,
       });
       hegelWatcher = new TrackWatcher({ zone: cfg.hegel.zone });
-      hegelWatcher.on('playing', () => hegel.onPlaying());
-      hegelWatcher.on('idle', () => hegel.onIdle());
-      hegelWatcher.on('zones', () => { if (hegelWatcher.playingZones.size === 0) hegel.onIdle(); });
-      log.info(`hegel hand-back on: ${cfg.hegel.host}, zone "${cfg.hegel.zone || '(any)'}", input ${cfg.hegel.idleInput} after ${cfg.hegel.idleSeconds}s quiet`);
+
+      // Fast path: while the Hegel zone is idle, watch the Shield's foreground app and hand the amp
+      // to the TV input the moment a media app comes forward (the idleSeconds timer stays as a
+      // backstop). It only polls while Roon is idle, and onTrigger re-checks that, so a slow poll
+      // landing just as playback starts can never pull the amp off Network mid-song.
+      let hegelZonePlaying = false;
+      if (cfg.hegel.shieldTrigger && cfg.shield.target) {
+        const { ShieldForegroundWatcher } = require('./shield/foreground');
+        hegelShieldFg = new ShieldForegroundWatcher({
+          adb: cfg.shield.adb,
+          target: cfg.shield.target,
+          adbKey: cfg.shield.adbKey,
+          triggerApps: cfg.hegel.shieldApps,
+          pollMs: cfg.hegel.shieldPollSeconds * 1000,
+          onTrigger: (pkg) => { if (!hegelZonePlaying) return hegel.handBack(`Shield app ${pkg} came to the front`); },
+        });
+      }
+      const fg = hegelShieldFg;
+      hegelWatcher.on('playing', () => { hegelZonePlaying = true; hegel.onPlaying(); if (fg) fg.stop(); });
+      hegelWatcher.on('idle', () => { hegelZonePlaying = false; hegel.onIdle(); if (fg) fg.start(); });
+      hegelWatcher.on('zones', () => {
+        if (hegelWatcher.playingZones.size === 0) { hegelZonePlaying = false; hegel.onIdle(); if (fg) fg.start(); }
+      });
+      log.info(`hegel hand-back on: ${cfg.hegel.host}, zone "${cfg.hegel.zone || '(any)'}", input ${cfg.hegel.idleInput} after ${cfg.hegel.idleSeconds}s quiet${fg ? `, or the moment a Shield media app opens (${cfg.hegel.shieldApps.length} apps watched)` : ''}`);
     }
     roon = new RoonExtension({
       onZoneEvent: (response, msg) => {
@@ -366,6 +387,8 @@ async function runService(configFile) {
     source.stop();
     if (beacon) beacon.stop();
     if (control) control.stop();
+    if (hegelShieldFg) hegelShieldFg.stop();
+    if (hegel) hegel.stop();
     // Hand the panels back before exiting, rather than leaving them stuck in extControl.
     try { await renderer.releaseNow(); } catch (err) { log.error(`shutdown: ${err.message}`); }
     renderer.stop(); // sends the blackout frame

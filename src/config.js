@@ -89,6 +89,19 @@ const DEFAULTS = {
     idleSeconds: 600,    // how long the zone must stay quiet before switching (10 min, the common choice)
     idleInput: 6,        // input to select then — 6 = Optical 2 on the H190 (the TV)
     networkInput: 9,     // only switch when the amp is still on this input (9 = Network)
+    shieldTrigger: true, // also switch to idleInput the moment a Shield TV/media app comes to the
+                         // front (the fast path; idleSeconds above is then just a backstop). Reuses
+                         // the Shield's adb address/key from the `shield` block.
+    shieldPollSeconds: 4,// how often to check the Shield's foreground app while Roon is idle
+    shieldApps: [        // Shield packages that mean "the TV is the source" → select idleInput; they
+                         // all route audio out through the TV. The Roon Shield visualiser is absent
+                         // on purpose (it rides network playback, which wants Network). Edit freely.
+      'com.plexapp.android', 'com.google.android.youtube.tv', 'com.netflix.ninja',
+      'com.stremio.one', 'com.google.android.videos', 'com.amazon.amazonvideo.livingroom.nvidia',
+      'ca.tsn.mobile.android', 'com.rogers.sportsnet.sportsnet', 'com.nvidia.tegrazone3',
+      'com.spotify.tv.android', 'com.aspiro.tidal', 'com.qobuz.music', 'com.soundcloud.android',
+      'com.google.android.youtube.tvmusic', 'au.com.shiftyjelly.pocketcasts',
+    ],
   },
 };
 
@@ -209,9 +222,15 @@ function validate(cfg, errors) {
   num(cfg.hegel.idleSeconds, 'hegel.idleSeconds', 5, 86400);
   num(cfg.hegel.idleInput, 'hegel.idleInput', 1, 9);
   num(cfg.hegel.networkInput, 'hegel.networkInput', 1, 9);
+  if (typeof cfg.hegel.shieldTrigger !== 'boolean') errors.push('hegel.shieldTrigger: expected true or false');
+  num(cfg.hegel.shieldPollSeconds, 'hegel.shieldPollSeconds', 1, 3600);
+  if (!Array.isArray(cfg.hegel.shieldApps) || !cfg.hegel.shieldApps.every((s) => typeof s === 'string' && s)) {
+    errors.push('hegel.shieldApps: expected an array of Android package-name strings');
+  }
   if (cfg.hegel.enabled === true) {
     if (cfg.roon.enabled !== true) errors.push('hegel.enabled requires roon.enabled: true (idle events come from Roon)');
     if (!cfg.hegel.host) errors.push('hegel.enabled requires hegel.host (the amp\'s IP address)');
+    if (cfg.hegel.shieldTrigger && !cfg.shield.target) errors.push('hegel.shieldTrigger requires shield.target (the Shield\'s adb address)');
   }
 
   if (typeof cfg.shield.enabled !== 'boolean') errors.push('shield.enabled: expected true or false');

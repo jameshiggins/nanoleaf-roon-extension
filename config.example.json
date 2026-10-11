@@ -70,6 +70,13 @@
     "zone": "Living Room",
     "idleSeconds": 600,
     "idleInput": 6,
-    "networkInput": 9
+    "networkInput": 9,
+    "shieldTrigger": true,
+    "shieldPollSeconds": 4,
+    "shieldApps": [
+      "com.plexapp.android",
+      "com.google.android.youtube.tv",
+      "com.netflix.ninja"
+    ]
   }
 }

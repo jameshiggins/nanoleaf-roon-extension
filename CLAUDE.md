@@ -53,6 +53,14 @@ npm run analyze       # tools/analyze.js track analyzer
   `idleInput` 6 = Optical 2 (the TV) — only if the amp is still on `networkInput` 9, so a manually
   chosen input is never overridden; play resuming inside the window cancels it. Deliberately NOT
   tied to the Roon Shield app exiting (tried, rejected by the user). Locked by `test/hegelinput.test.js`.
+  **Fast path (2026-10-11):** alongside that timer, a Shield-foreground watcher (`src/shield/foreground.js`)
+  hands the amp back the *instant* a TV/media app in `hegel.shieldApps` comes to the front on the Shield
+  (Plex, YouTube, Netflix, the standalone music apps, GeForce NOW … everything on the Shield routes audio
+  out through the TV to Optical 2; the Roon Shield visualiser is deliberately excluded since it rides
+  network playback). It only polls while Roon is idle (started on the zone's `idle`, stopped on `playing`,
+  and `onTrigger` re-checks) so it can never pull the amp off Network mid-song, ignores a sleeping Shield,
+  reuses the `shield` block's adb address/key, and delegates the actual switch to `handBack` (one place
+  talks to the amp). `idleSeconds` is now just the backstop. Locked by `test/foreground.test.js`.
 - Config: `config.json` (see `config.example.json`). `visuals.floor` is the coverage dial
   (all-panels-lit), `visuals.gain` is input level — they are not interchangeable.
 

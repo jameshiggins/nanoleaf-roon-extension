@@ -90,10 +90,12 @@ class HegelInputSwitch {
   }
 
   /**
-   * The countdown elapsed. Reads the amp's input and moves it off Network if it's still there.
+   * Reads the amp's input and moves it off Network to idleInput if it's still there. Called both
+   * by the idle countdown and by the Shield-foreground watcher; `reason` only tags the log line.
+   * @param {string} [reason] why we're handing back (defaults to the quiet-window message)
    * @returns {Promise<'switched'|'left-alone'|'unknown'|'busy'|'error'>}
    */
-  async handBack() {
+  async handBack(reason) {
     if (this.busy) return 'busy';
     this.busy = true;
     try {
@@ -109,7 +111,8 @@ class HegelInputSwitch {
         return 'left-alone';
       }
       await this.send(this.host, this.port, `-i.${this.idleInput}`);
-      log.info(`zone quiet for ${Math.round(this.idleMs / 1000)}s — switched the Hegel from Network to input ${this.idleInput}`);
+      const why = reason || `zone quiet for ${Math.round(this.idleMs / 1000)}s`;
+      log.info(`${why} — switched the Hegel from Network to input ${this.idleInput}`);
       return 'switched';
     } catch (err) {
       log.warn(`could not reach the Hegel at ${this.host}:${this.port}: ${err.message}`);
