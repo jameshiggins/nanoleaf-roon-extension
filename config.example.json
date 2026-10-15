@@ -72,7 +72,7 @@
     "idleInput": 6,
     "networkInput": 9,
     "shieldTrigger": true,
-    "shieldPollSeconds": 4,
+    "shieldPollSeconds": 1,
     "shieldApps": [
       "com.plexapp.android",
       "com.google.android.youtube.tv",

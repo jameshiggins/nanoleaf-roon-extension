@@ -92,7 +92,9 @@ const DEFAULTS = {
     shieldTrigger: true, // also switch to idleInput the moment a Shield TV/media app comes to the
                          // front (the fast path; idleSeconds above is then just a backstop). Reuses
                          // the Shield's adb address/key from the `shield` block.
-    shieldPollSeconds: 4,// how often to check the Shield's foreground app while Roon is idle
+    shieldPollSeconds: 1,// re-check cadence for the Shield's foreground app while Roon is idle
+                         // (it also checks instantly the moment Roon goes idle, and backs off while
+                         // the Shield is unreachable so it never hammers a powered-off TV)
     shieldApps: [        // Shield packages that mean "the TV is the source" → select idleInput; they
                          // all route audio out through the TV. The Roon Shield visualiser is absent
                          // on purpose (it rides network playback, which wants Network). Edit freely.

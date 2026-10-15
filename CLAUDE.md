@@ -57,8 +57,10 @@ npm run analyze       # tools/analyze.js track analyzer
   hands the amp back the *instant* a TV/media app in `hegel.shieldApps` comes to the front on the Shield
   (Plex, YouTube, Netflix, the standalone music apps, GeForce NOW … everything on the Shield routes audio
   out through the TV to Optical 2; the Roon Shield visualiser is deliberately excluded since it rides
-  network playback). It only polls while Roon is idle (started on the zone's `idle`, stopped on `playing`,
-  and `onTrigger` re-checks) so it can never pull the amp off Network mid-song, ignores a sleeping Shield,
+  network playback). It only runs while Roon is idle (started on the zone's `idle`, stopped on `playing`,
+  and `onTrigger` re-checks) so it can never pull the amp off Network mid-song; it checks the instant Roon
+  goes idle then every `shieldPollSeconds` (1 s) via a self-scheduling loop, backing off a few seconds
+  while the Shield is unreachable so it never hammers a powered-off TV; ignores a sleeping Shield,
   reuses the `shield` block's adb address/key, and delegates the actual switch to `handBack` (one place
   talks to the amp). `idleSeconds` is now just the backstop. Locked by `test/foreground.test.js`.
 - Config: `config.json` (see `config.example.json`). `visuals.floor` is the coverage dial
