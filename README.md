@@ -70,11 +70,12 @@ when the music stops — it does not stream to them continuously.
 3. **Acquire on play** — when Roon starts playing, the extension saves the panels' current scene
    and power state, powers them on, and enters extControl v2 streaming mode.
 4. **Visualize & stream** — the active visualizer paints all panels from those features (spatial
-   motion from the layout — left/right, rings, sweeps) and frames go out at 30 fps over extControl
-   v2 UDP, each with `transition: 0` so beats and motion land instantly instead of fading. A
-   silence gate fades to black through quiet passages. Every few seconds it re-asserts extControl,
-   so if anything else grabs the panels mid-song (the Nanoleaf app, a schedule, HomeKit) the
-   visuals reclaim them within a few seconds.
+   motion from the layout — left/right, rings, sweeps) and frames go out at 10 fps (configurable up
+   to 20 — the Light Panels controller is rated for 10 Hz) over extControl v2 UDP, each with a
+   100 ms hardware fade (`visuals.transition`) so the controller glides between frames. A silence
+   gate fades to black through quiet passages. Every 15 s it re-checks the controller, so if
+   anything else grabs or dims the panels mid-song (the Nanoleaf app, a schedule, HomeKit) the
+   visuals reclaim them within half a minute.
 5. **Rotate** — Roon track changes (via the transport API) trigger a switch to a new
    visualizer + palette.
 6. **Release on stop** — when Roon goes idle, the extension restores exactly the scene (and power

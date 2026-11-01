@@ -17,6 +17,7 @@
  */
 
 const { EnvelopeFollower, durationMs } = require('../audio/pcm');
+const log = require('../log')('audio');
 
 const FULL_SCALE = 32768;
 
@@ -87,7 +88,7 @@ class OnsetDetector {
   // beat-driven visualizer. Lower = more beats detected (livelier), higher = stricter.
   constructor({ historyLength = 43, sensitivity = 1.1, floor = 0.01, refractoryMs = 150 } = {}) {
     this.history = [];
-    this.historyLength = historyLength; // ~1.5 s of 35 ms chunks
+    this.historyLength = historyLength; // window in chunks: ~2 s at the capture source's 50 ms chunks
     this.sensitivity = sensitivity;
     this.floor = floor;
     this.refractoryMs = refractoryMs;
@@ -139,6 +140,9 @@ class FeatureExtractor {
     );
     this.pendingOnset = false;
     this.sampleRate = opts.sampleRate ?? 44100;
+    this.lastChunkAt = 0;
+    this.lastDecayAt = 0;
+    this._lastGapLogAt = -Infinity;
   }
 
   setFormat({ sampleRate, channels }) {
@@ -161,11 +165,34 @@ class FeatureExtractor {
     this.env.bass.update(clamp(m.bass * 1.5), dt);
     this.env.mid.update(clamp(m.mid * 2.5), dt);
     this.env.treble.update(clamp(m.treble * 4), dt);
-    if (this.onsetDetector.update(m.bass * g, this.now())) this.pendingOnset = true;
+    const nowMs = this.now();
+    if (this.onsetDetector.update(m.bass * g, nowMs)) this.pendingOnset = true;
+    // A capture feed that hiccups (dshow, VB-Cable, an ffmpeg respawn) shows up here first:
+    // chunks are ~50 ms apart, so a 100 ms+ gap is worth a line for correlating stutters.
+    if (this.lastChunkAt && nowMs - this.lastChunkAt > 100 && nowMs - this._lastGapLogAt > 5000) {
+      this._lastGapLogAt = nowMs;
+      log.warn(`audio feed gap: ${Math.round(nowMs - this.lastChunkAt)} ms between chunks`);
+    }
+    this.lastChunkAt = nowMs;
+    this.lastDecayAt = 0;
   }
 
   /** Read the current feature set; the onset flag is consumed (fires once). */
   snapshot() {
+    // Envelopes only advance in onChunk, so a stalled capture feed (ffmpeg respawn,
+    // dshow hiccup) freezes them at their last value and the wall animates blind,
+    // then snaps when audio returns. Treat a >250 ms feed gap as silence instead:
+    // decay every envelope toward 0 for the elapsed time.
+    const nowMs = this.now();
+    if (this.lastChunkAt && nowMs - this.lastChunkAt > 250) {
+      if (!this.lastDecayAt) log.warn(`audio feed stalled ${Math.round(nowMs - this.lastChunkAt)} ms — decaying to silence until chunks resume`);
+      const since = nowMs - (this.lastDecayAt || this.lastChunkAt);
+      if (since > 0) {
+        for (const key of Object.keys(this.env)) this.env[key].update(0, since);
+        this.lastDecayAt = nowMs;
+      }
+      this.pendingOnset = false;
+    }
     const e = this.env;
     const onset = this.pendingOnset;
     this.pendingOnset = false;

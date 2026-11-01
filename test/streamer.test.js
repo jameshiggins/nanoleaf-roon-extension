@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const dgram = require('node:dgram');
+const { EventEmitter } = require('node:events');
 const { encodeFrameV2, Streamer } = require('../src/nanoleaf/streamer');
 
 test('encodeFrameV2: pinned byte layout', () => {
@@ -88,6 +89,32 @@ test('Streamer: blackout addresses every panel with zeros', async () => {
     streamer.close();
     socket.close();
   }
+});
+
+test('Streamer: a frame a few ms early (coarse-timer jitter) still goes straight out', async () => {
+  const { socket, received, port } = await udpReceiver();
+  const streamer = new Streamer({ host: '127.0.0.1', port, fps: 10 }); // 100 ms budget → 50 ms slack
+  try {
+    streamer.sendFrame([{ id: 1, r: 1, g: 0, b: 0 }]);
+    await new Promise((r) => setTimeout(r, 65)); // lands ~65-80 ms in: "early", but within slack
+    streamer.sendFrame([{ id: 2, r: 2, g: 0, b: 0 }]);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(received.length, 2, `second frame must not wait for the flush timer, got ${received.length}`);
+  } finally {
+    streamer.close();
+    socket.close();
+  }
+});
+
+test('Streamer: socket errors are logged, not thrown (a dead route must not crash the service)', () => {
+  const socket = new EventEmitter();
+  socket.send = (payload, port, host, cb) => cb(new Error('ENETUNREACH'));
+  socket.close = () => {};
+  const streamer = new Streamer({ host: '10.255.255.1', port: 60222, fps: 10, socket });
+  assert.doesNotThrow(() => streamer.sendFrame([{ id: 1, r: 1, g: 1, b: 1 }]));
+  assert.doesNotThrow(() => socket.emit('error', new Error('boom')));
+  streamer.close();
+  assert.equal(socket.listenerCount('error'), 0, 'close unhooks the handler from an injected socket');
 });
 
 test('Streamer: ignores frames after close', async () => {

@@ -21,6 +21,25 @@ test('fromObject: deep merge preserves untouched defaults', () => {
   assert.equal(cfg.nanoleaf.fps, 30);
 });
 
+test('fromObject: visuals.fps outside the lever range is clamped with a warning, never fatal', () => {
+  // The cap was lowered after the companion app had persisted 45/60 — those configs must load.
+  const warnings = [];
+  const cfg = config.fromObject({ visuals: { fps: 60 } }, { warn: (m) => warnings.push(m) });
+  assert.equal(cfg.visuals.fps, config.FPS_MAX);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /visuals\.fps 60/);
+  assert.equal(config.fromObject({ visuals: { fps: 5 } }).visuals.fps, config.FPS_MIN);
+  assert.equal(config.fromObject({ visuals: { fps: 15 } }).visuals.fps, 15);
+});
+
+test('fromObject: Light Panels defaults — 10 fps, 100 ms fade, 15 s controller check', () => {
+  const cfg = config.fromObject({});
+  assert.equal(cfg.visuals.fps, 10);
+  assert.equal(cfg.visuals.transition, 1);
+  assert.equal(cfg.visuals.extControlKeepaliveMs, 15000);
+  assert.throws(() => config.fromObject({ visuals: { transition: 9 } }), /visuals\.transition/);
+});
+
 test('fromObject: unknown keys are rejected (typo protection)', () => {
   assert.throws(() => config.fromObject({ nanoleaf: { hots: 'x' } }), /nanoleaf\.hots: unknown setting/);
 });

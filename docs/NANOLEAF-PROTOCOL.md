@@ -77,8 +77,12 @@ Notes learned the hard way (encoded in the streamer):
 
 - **Keepalive:** if no datagram arrives for ~10 s the controller drops out of extControl mode.
   The streamer re-sends the last frame at 1 Hz during silence.
-- **Rate:** 30 fps is safe on Canvas/Shapes and smooth for the visualizers; 60 fps generally
-  works but the controller/LAN is usually the limit before it helps. Configurable via `nanoleaf.fps`.
+- **Rate:** Nanoleaf's doc rates the Light Panels (Aurora, NL22) controller for **10 Hz** with
+  100 ms transitions doing the smoothing; driving it at 30–60 made the motion elastic on this wall
+  (frames back up in the controller, then flush). `visuals.fps` is the lever (10–20, `FPS_MAX` in
+  `src/config.js`), `visuals.transition` the per-frame fade. Canvas/Shapes tolerate 30. Note Node's
+  timers on Windows tick at 15.6 ms — the renderer's drift-corrected loop keeps the average honest
+  and logs the measured rate once a minute.
 - **Panels not in the frame keep their last color** — always address every panel.
 - v1 (`extControlVersion` omitted, 1-byte panel IDs) is required only by original Aurora
   firmware < 3.1; not supported here.

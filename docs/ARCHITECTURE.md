@@ -46,14 +46,14 @@ for the process lifetime.
 | `src/visuals/visualizers.js` | 11 parametric engines × variant grid → 28 named visualizers (the pulse family was cut); `createVisual`, `describeVisuals` | palettes |
 | `src/visuals/layout.js` | `prepareLayout()`: panel positions → normalized nx/ny, left→right, drop pseudo-panel | — |
 | `src/visuals/shuffle.js` | `ShuffleBag` (no-repeat rotation) + `filterNames` (include/exclude) | — |
-| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer at fps; silence gate; rotation on track change/timer; panel ownership (`acquire`/`release`/`releaseNow` via a single-flight `_reconcile`, debounced release, extControl keepalive) | features, visualizers, palettes, shuffle |
+| `src/visuals/renderer.js` | `VisualRenderer`: features → active visualizer → streamer on a drift-corrected fps timer (measured rate in `getState().fpsReal`); silence gate; rotation on track change/timer; panel ownership (`acquire`/`release`/`releaseNow` via a single-flight `_reconcile`, debounced release, extControl keepalive) | features, visualizers, palettes, shuffle |
 | `src/nanoleaf/client.js` | REST: `createToken`, `getInfo`, `getLayout`, `enableExtControl`, `setPower`, `getPower`, `getSelectedEffect`, `selectEffect`, `identify` | http |
 | `src/nanoleaf/streamer.js` | `encodeFrameV2()` + `Streamer` (UDP socket, newest-frame-wins pacing) | dgram |
 | `src/nanoleaf/discovery.js` | SSDP M-SEARCH + response parsing | dgram |
 | `src/roon/trackwatcher.js` | Pure event logic: raw zone events → `track`/`playing`/`idle`/`zones` (no Roon dependency) | — |
 | `src/control/server.js` | Companion-app HTTP + SSE server: serves the web app, `GET /api/state`, `/api/catalogue`, `POST /api/command`, live `GET /events`; `applyCommand` pure command applier | http (built-in) |
 | `src/control/webapp/index.html` | Self-contained TV web app: canvas panel-mirror, now-playing, D-pad controls over the API | — |
-| `android/` | Android TV WebView wrapper (Java + Gradle) that loads the web app; ships as source (no SDK here to build) | Android SDK |
+| *(separate repo)* [`nanoleaf-roon-android`](https://github.com/jameshiggins/nanoleaf-roon-android) | Android TV WebView wrapper (Java + Gradle) that loads the web app; lives in the sibling folder `..\nanoleaf-roon-android\` | Android SDK |
 
 ## Design rules
 

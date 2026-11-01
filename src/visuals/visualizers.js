@@ -212,7 +212,10 @@ class WheelEngine extends BaseEngine {
   }
   render(f, dtMs) {
     const dir = this.opts.dir ?? 1;
-    this.angle = (this.angle + dir * (30 + 240 * f.energy) * (dtMs / 1000) + 360) % 360;
+    // Speed floors here and in the engines below keep quiet passages reading as
+    // "easing off" rather than stalling — the old 30..270 span (9x) made dynamic
+    // music look like the wall was choking.
+    this.angle = (this.angle + dir * (100 + 170 * f.energy) * (dtMs / 1000) + 360) % 360;
     const flash = this.decayFlash(f, dtMs, this.opts.strobe ? 120 : 150);
     const v = Math.min(1, 0.1 + 0.9 * f.energy + flash * 0.4);
     return frame(this.layout, (p) => {
@@ -236,7 +239,7 @@ class WaveEngine extends BaseEngine {
     this.phase = 0;
   }
   render(f, dtMs) {
-    this.phase = (this.phase + ((0.25 + 0.9 * f.energy) * dtMs) / 1000) % 1;
+    this.phase = (this.phase + ((0.5 + 0.65 * f.energy) * dtMs) / 1000) % 1;
     const width = 0.015 + 0.05 * f.bass;
     const axis = this.opts.axis === 'y' ? 'ny' : 'nx';
     const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.2);
@@ -300,7 +303,7 @@ class ChaseEngine extends BaseEngine {
     if (this.opts.onBeat) {
       if (f.onset) this.pos = (this.pos + 1) % n;
     } else {
-      this.pos = (this.pos + ((0.5 + 2.5 * f.energy) * n * dtMs) / 4000) % n;
+      this.pos = (this.pos + ((1.2 + 1.8 * f.energy) * n * dtMs) / 4000) % n;
     }
     const width = Math.max(1.2, n * 0.18);
     const bg = dim(hsv(this.palette.base, 1, 1), f.energy * 0.25);
@@ -365,7 +368,7 @@ class BounceEngine extends BaseEngine {
     this.v = 1;
   }
   render(f, dtMs) {
-    this.x += (this.v * (0.4 + 1.6 * f.energy) * dtMs) / 1000;
+    this.x += (this.v * (0.8 + 1.2 * f.energy) * dtMs) / 1000;
     if (this.x > 1) { this.x = 1; this.v = -1; }
     if (this.x < 0) { this.x = 0; this.v = 1; }
     const flash = this.decayFlash(f, dtMs);

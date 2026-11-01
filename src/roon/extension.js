@@ -40,10 +40,13 @@ class RoonExtension {
    *   Providing it makes RoonApiTransport a required service and (re)subscribes
    *   on every pairing — core_paired delivers a fresh Core after each reconnect,
    *   so the subscription must be renewed there.
+   *   onOutputEvent: raw subscribe_outputs callback (e.g. FeedMonitor#handleOutputs);
+   *   rides on the transport service, so it only fires alongside onZoneEvent.
    *   wantImages: request the image service so getImage() can fetch album art.
    */
   constructor(opts = {}) {
     this.onZoneEvent = opts.onZoneEvent ?? null;
+    this.onOutputEvent = opts.onOutputEvent ?? null;
     this.wantImages = opts.wantImages ?? false;
     this.roon = null;
     this.status = null;
@@ -65,6 +68,9 @@ class RoonExtension {
     }
 
     this.roon = new RoonApi({
+      // Without this, node-roon-api console.logs every message body — including full
+      // zone dumps and album-art JPEGs serialized as JSON — into the service log.
+      log_level: 'none',
       extension_id: 'com.jameshiggins.nanoleaf-roon',
       display_name: 'Nanoleaf Roon Extension',
       display_version: require('../../package.json').version,
@@ -84,6 +90,15 @@ class RoonExtension {
               log.error('zone event handler failed:', err);
             }
           });
+          if (this.onOutputEvent) {
+            core.services.RoonApiTransport.subscribe_outputs((response, msg) => {
+              try {
+                this.onOutputEvent(response, msg);
+              } catch (err) {
+                log.error('output event handler failed:', err);
+              }
+            });
+          }
         }
       },
       core_unpaired: () => {
@@ -103,6 +118,30 @@ class RoonExtension {
     this.setStatus('Starting…');
     this.roon.start_discovery();
     log.info('Roon discovery started — enable the extension in Roon Settings → Extensions');
+  }
+
+  /**
+   * Tear down and re-run Core discovery. Used when the network changed under node-roon-api's
+   * SOOD sockets (see neterr.js) — the pairing itself survives, only discovery is rebuilt.
+   * Coalesces bursts: one restart per `delayMs` window.
+   */
+  restartDiscovery(delayMs = 3000) {
+    if (!this.roon || this._discoveryRestart) return;
+    this._discoveryRestart = setTimeout(() => {
+      this._discoveryRestart = null;
+      try {
+        this.roon.stop_discovery();
+        // node-roon-api 1.2.3: Sood.stop() clears its interface re-scan timer but leaves the
+        // handle set, so a later start() never re-arms it. Reset it so interface changes
+        // keep being noticed after a restart.
+        if (this.roon._sood) this.roon._sood.interface_timer = null;
+        this.roon.start_discovery();
+        log.info('Roon discovery restarted after a network change');
+      } catch (err) {
+        log.warn(`could not restart Roon discovery: ${err.message}`);
+      }
+    }, delayMs);
+    if (typeof this._discoveryRestart.unref === 'function') this._discoveryRestart.unref();
   }
 
   /** Show a status line in Roon's extension list. No-op when Roon is disabled. */

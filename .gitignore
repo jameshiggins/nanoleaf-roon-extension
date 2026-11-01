@@ -3,3 +3,6 @@ logs/
 config.json
 roon-state/
 *.log
+
+# local config backups (contain Nanoleaf/Roon tokens)
+config.json.bak*

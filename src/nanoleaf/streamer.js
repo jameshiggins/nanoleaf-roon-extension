@@ -3,16 +3,17 @@
 /** extControl v2 UDP frame encoding and paced sending. Port 60222, big-endian. */
 
 const dgram = require('node:dgram');
+const log = require('../log')('stream');
 
 const EXT_CONTROL_PORT = 60222;
 const KEEPALIVE_MS = 1000; // controller drops extControl after ~10 s of silence
+const ERROR_LOG_EVERY_MS = 10000; // a dead route fails every datagram; don't flood the log
 
 /**
  * Encode one v2 frame.
  * @param {Array<{id: number, r: number, g: number, b: number, w?: number, transition?: number}>} panels
- *        transition is in units of 100 ms. Default 0 = instant: at 30 fps a new frame
- *        arrives every ~33 ms, so any non-zero fade leaves the panels always
- *        interpolating a few frames behind and smears beats/motion into a blur.
+ *        transition is in units of 100 ms; default 0 = instant. The renderer stamps its
+ *        `transition` lever (1 by default) so the controller glides between 10 Hz frames.
  * @returns {Buffer}
  */
 function encodeFrameV2(panels) {
@@ -50,7 +51,12 @@ class Streamer {
     this.intervalMs = 1000 / (opts.fps ?? 30);
     this.socket = opts.socket ?? dgram.createSocket('udp4');
     this.ownsSocket = !opts.socket;
-    this.lastSentAt = 0;
+    // An unhandled 'error' on a dgram socket throws → uncaughtException → the service
+    // restarts mid-song. Losing frames is the streamer's normal failure mode: log, carry on.
+    this._lastErrorAt = -Infinity;
+    this._onSocketError = (err) => this._noteError(err);
+    if (typeof this.socket.on === 'function') this.socket.on('error', this._onSocketError);
+    this.lastSentAt = -Infinity;
     this.lastPayload = null;
     this.pending = null;
     this.flushTimer = null;
@@ -63,16 +69,21 @@ class Streamer {
   sendFrame(panels) {
     if (this.closed) return;
     const payload = encodeFrameV2(panels);
-    const now = Date.now();
+    const now = performance.now();
     const due = this.lastSentAt + this.intervalMs;
-    if (now >= due) {
+    // Half an interval of slack: the renderer's ticks land on Windows' coarse timer clock, so
+    // a frame a few ms "early" is still this period's frame and goes straight out. Without
+    // the slack it would park in `pending`, its flush timer would round up to the next clock
+    // tick, the following frame would be early again, and the send point would drift later
+    // every frame. Genuine bursts (several frames inside half a period) still coalesce.
+    if (now >= due - this.intervalMs / 2) {
       this._transmit(payload, now);
     } else {
       this.pending = payload;
       if (!this.flushTimer) {
         this.flushTimer = setTimeout(() => {
           this.flushTimer = null;
-          if (this.pending && !this.closed) this._transmit(this.pending, Date.now());
+          if (this.pending && !this.closed) this._transmit(this.pending, performance.now());
         }, due - now);
       }
     }
@@ -96,13 +107,25 @@ class Streamer {
     this.pending = null;
     this.lastSentAt = now;
     this.lastPayload = payload;
-    this.socket.send(payload, this.port, this.host);
+    this._send(payload);
   }
 
   _keepalive() {
     if (this.closed || !this.lastPayload) return;
-    if (Date.now() - this.lastSentAt < KEEPALIVE_MS) return;
-    this.socket.send(this.lastPayload, this.port, this.host);
+    if (performance.now() - this.lastSentAt < KEEPALIVE_MS) return;
+    this._send(this.lastPayload);
+  }
+
+  _send(payload) {
+    // With a callback, send failures come here instead of as an 'error' event.
+    this.socket.send(payload, this.port, this.host, (err) => { if (err) this._noteError(err); });
+  }
+
+  _noteError(err) {
+    const now = performance.now();
+    if (now - this._lastErrorAt < ERROR_LOG_EVERY_MS) return;
+    this._lastErrorAt = now;
+    log.warn(`UDP send to ${this.host}:${this.port} failed: ${err.message}`);
   }
 
   close() {
@@ -110,6 +133,7 @@ class Streamer {
     clearInterval(this.keepaliveTimer);
     clearTimeout(this.flushTimer);
     if (this.ownsSocket) this.socket.close();
+    else if (typeof this.socket.off === 'function') this.socket.off('error', this._onSocketError);
   }
 }
 

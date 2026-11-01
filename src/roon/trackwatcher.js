@@ -119,7 +119,11 @@ class TrackWatcher extends EventEmitter {
 
   _updatePlaying(zone) {
     const wasQuiet = this.playingZones.size === 0;
-    if (zone.state === 'playing') {
+    // 'loading' is the transient state between tracks (buffering, auto-radio picking
+    // the next song). Counting it as idle schedules a panel release at every track
+    // boundary; when the gap outlasts the debounce the wall flashes the restored idle
+    // effect and re-acquires seconds later.
+    if (zone.state === 'playing' || zone.state === 'loading') {
       this.playingZones.add(zone.zone_id);
       if (wasQuiet) this.emit('playing');
     } else {

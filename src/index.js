@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
+const os = require('node:os');
 const config = require('./config');
 const { NanoleafClient, NanoleafHttpError } = require('./nanoleaf/client');
 const { Streamer } = require('./nanoleaf/streamer');
@@ -10,6 +11,7 @@ const { prepareLayout } = require('./visuals/layout');
 const { VisualRenderer } = require('./visuals/renderer');
 const { describeVisuals } = require('./visuals/visualizers');
 const { generatePalettes } = require('./visuals/palettes');
+const { isTransientNetworkError } = require('./roon/neterr');
 const log = require('./log')('main');
 
 const EXIT_CONFIG = 2;
@@ -76,9 +78,17 @@ function listVisuals() {
 }
 
 async function runService(configFile) {
+  // The render loop shares this box with whatever else runs on it (a DAW, builds). Raise our
+  // own priority here rather than relying on run.cmd's delayed bump (Task Scheduler starts
+  // tasks BelowNormal by default).
+  try {
+    os.setPriority(os.constants.priority.PRIORITY_ABOVE_NORMAL);
+  } catch (err) {
+    log.debug(`could not raise process priority: ${err.message}`);
+  }
   let cfg;
   try {
-    cfg = config.load(configFile);
+    cfg = config.load(configFile, { warn: (m) => log.warn(m) });
   } catch (err) {
     console.error(err.message);
     process.exit(EXIT_CONFIG);
@@ -92,6 +102,9 @@ async function runService(configFile) {
   // so a Roon outage never darkens the panels — rotation just pauses.
   let roon = null;
   let renderer = null;
+  let hegel = null;          // assigned below inside `if (cfg.roon.enabled)`; referenced in shutdown
+  let hegelShieldFg = null;  // Shield-foreground watcher, same scope story as `hegel`
+  let latestArt = null; // { key, body, type } — current track's cover for the companion app
   if (cfg.roon.enabled) {
     const { RoonExtension } = require('./roon/extension');
     const { TrackWatcher } = require('./roon/trackwatcher');
@@ -110,9 +123,21 @@ async function runService(configFile) {
       resolvePalette(Math.random() < 0.5 ? 'Mono' : 'Vintage Modern', cfg.visuals.palettes);
     watcher.on('track', (track) => {
       if (!renderer) return;
-      renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName });
+      renderer.setNowPlaying({ title: track.title, artist: track.artist, album: track.album, zoneName: track.zoneName, art: track.imageKey || null });
       renderer.onTrackChange();
       currentTrackKey = track.key;
+      // Companion-app cover art: cache a phone-sized copy of the current cover so the
+      // control server can serve GET /api/art without a Roon round-trip per client.
+      if (track.imageKey) {
+        roon.getImage(track.imageKey, { width: 600, height: 600 })
+          .then((img) => {
+            if (track.key !== currentTrackKey) return; // a newer track won the race
+            latestArt = { key: track.imageKey, body: img.body, type: img.contentType || 'image/jpeg' };
+          })
+          .catch(() => { if (track.key === currentTrackKey) latestArt = null; });
+      } else {
+        latestArt = null;
+      }
       // Checked per track (not cached) so the albumColors lever can be toggled live.
       if (!cfg.visuals.albumColors) { renderer.clearLivePalette(); return; }
       if (!track.imageKey) { renderer.clearLivePalette(); return; } // no art → pinned palette
@@ -141,45 +166,157 @@ async function runService(configFile) {
         setStatus(`Zone "${cfg.roon.zone}" not found — Roon zones: ${all.join(', ') || '(none)'}`, true);
       }
     });
+    // Feed health: Roon playing into a dead cable looks exactly like a quiet song on
+    // the wall, so say it out loud — service log, Roon's extension status, companion app.
+    const { FeedMonitor } = require('./roon/feedmonitor');
+    const feed = new FeedMonitor({ output: cfg.roon.feedOutput });
+    let roonPlaying = false;
+    watcher.on('playing', () => { roonPlaying = true; });
+    watcher.on('idle', () => { roonPlaying = false; });
+    feed.on('warning', (warning) => {
+      feedWarning = warning;
+      if (warning) log.warn(`${warning} Diagnose with nanoleaf-roon-service\\check-roonbridge.ps1`);
+      else log.info('audio feed from Roon is back');
+      if (renderer) renderer.setWarning(warning);
+      pushStatus();
+    });
+    setInterval(() => {
+      if (!renderer) return;
+      feed.sample(roonPlaying, renderer.lastFeatures.energy > cfg.visuals.silenceFloor, Date.now());
+    }, 5000).unref();
+    // Shield auto-launch: its own watcher because it follows one room (shield.zone), not
+    // whatever roon.zone the wall follows. A 'playing' out of a Subscribed snapshot is us
+    // (re)connecting mid-song, not someone pressing play — never launch on that.
+    let shieldWatcher = null;
+    let inSnapshot = false;
+    if (cfg.shield.enabled) {
+      const { ShieldLauncher } = require('./shield/launcher');
+      const launcher = new ShieldLauncher({
+        adb: cfg.shield.adb,
+        adbKey: cfg.shield.adbKey,
+        target: cfg.shield.target,
+        component: cfg.shield.component,
+        cooldownMs: cfg.shield.cooldownMinutes * 60 * 1000,
+      });
+      shieldWatcher = new TrackWatcher({ zone: cfg.shield.zone });
+      shieldWatcher.on('playing', () => { if (!inSnapshot) launcher.onFirstPlay(); });
+      log.info(`shield auto-launch on: ${cfg.shield.target}, zone "${cfg.shield.zone || '(any)'}"`);
+    }
+    // Hegel hand-back: once the living-room zone has been quiet for hegel.idleSeconds, move the
+    // amp off Network back to the TV's input (only if it is still on Network — see inputswitch.js).
+    // A Subscribed snapshot with nothing playing counts as quiet too, so a service restart during
+    // silence still hands the amp back instead of waiting for the next play/stop cycle.
+    let hegelWatcher = null;
+    if (cfg.hegel.enabled) {
+      const { HegelInputSwitch } = require('./hegel/inputswitch');
+      hegel = new HegelInputSwitch({
+        host: cfg.hegel.host,
+        port: cfg.hegel.port,
+        idleMs: cfg.hegel.idleSeconds * 1000,
+        idleInput: cfg.hegel.idleInput,
+        networkInput: cfg.hegel.networkInput,
+      });
+      hegelWatcher = new TrackWatcher({ zone: cfg.hegel.zone });
+
+      // Fast path: while the Hegel zone is idle, watch the Shield's foreground app and hand the amp
+      // to the TV input the moment a media app comes forward (the idleSeconds timer stays as a
+      // backstop). It only polls while Roon is idle, and onTrigger re-checks that, so a slow poll
+      // landing just as playback starts can never pull the amp off Network mid-song.
+      let hegelZonePlaying = false;
+      if (cfg.hegel.shieldTrigger && cfg.shield.target) {
+        const { ShieldForegroundWatcher } = require('./shield/foreground');
+        hegelShieldFg = new ShieldForegroundWatcher({
+          adb: cfg.shield.adb,
+          target: cfg.shield.target,
+          adbKey: cfg.shield.adbKey,
+          triggerApps: cfg.hegel.shieldApps,
+          pollMs: cfg.hegel.shieldPollSeconds * 1000,
+          onTrigger: (pkg) => { if (!hegelZonePlaying) return hegel.handBack(`Shield app ${pkg} came to the front`); },
+        });
+      }
+      const fg = hegelShieldFg;
+      hegelWatcher.on('playing', () => { hegelZonePlaying = true; hegel.onPlaying(); if (fg) fg.stop(); });
+      hegelWatcher.on('idle', () => { hegelZonePlaying = false; hegel.onIdle(); if (fg) fg.start(); });
+      hegelWatcher.on('zones', () => {
+        if (hegelWatcher.playingZones.size === 0) { hegelZonePlaying = false; hegel.onIdle(); if (fg) fg.start(); }
+      });
+      log.info(`hegel hand-back on: ${cfg.hegel.host}, zone "${cfg.hegel.zone || '(any)'}", input ${cfg.hegel.idleInput} after ${cfg.hegel.idleSeconds}s quiet${fg ? `, or the moment a Shield media app opens (${cfg.hegel.shieldApps.length} apps watched)` : ''}`);
+    }
     roon = new RoonExtension({
-      onZoneEvent: (response, msg) => watcher.handleEvent(response, msg),
+      onZoneEvent: (response, msg) => {
+        watcher.handleEvent(response, msg);
+        if (shieldWatcher) {
+          inSnapshot = response === 'Subscribed';
+          try { shieldWatcher.handleEvent(response, msg); } finally { inSnapshot = false; }
+        }
+        if (hegelWatcher) hegelWatcher.handleEvent(response, msg);
+      },
+      onOutputEvent: (response, msg) => feed.handleOutputs(response, msg),
       wantImages: true, // always request the image service so albumColors can toggle live
     });
     // roon.start() is deferred until after the renderer exists (below). Roon can be
     // playing the instant we subscribe, and that first 'playing' must reach a live
     // renderer — starting here would fire it into a null renderer and never acquire.
   }
+  // A feed warning stays pinned to Roon's status line; otherwise the next track
+  // change ("▶ visual · palette") would wipe it within minutes.
+  let feedWarning = null;
+  let lastStatus = { msg: '', isErr: false };
+  const pushStatus = () => {
+    if (!roon) return;
+    if (feedWarning) roon.setStatus(`${feedWarning} | ${lastStatus.msg}`, true);
+    else roon.setStatus(lastStatus.msg, lastStatus.isErr);
+  };
   const setStatus = (msg, isErr) => {
     log.info(`status: ${msg}`);
-    if (roon) roon.setStatus(msg, isErr);
+    lastStatus = { msg, isErr };
+    pushStatus();
   };
 
   // Nanoleaf: validate the token and fetch the layout. We deliberately do NOT power on
   // or enter extControl here — the renderer takes the panels when Roon starts playing
   // and gives them back when it stops.
   const client = new NanoleafClient(cfg.nanoleaf);
+  // Retry the first contact forever with capped backoff: at boot this process can
+  // start before the network stack is up (ENETUNREACH), and the scheduled task
+  // only relaunches us once — exiting here once left the wall dead for three days.
+  // Only a 401 is terminal: a bad token can never fix itself, retrying would
+  // hammer the controller and hide the need to re-pair.
   let layout;
-  try {
-    layout = await client.getLayout();
-  } catch (err) {
-    if (err instanceof NanoleafHttpError && err.status === 401) {
-      console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
-      process.exit(EXIT_REPAIR_NEEDED);
+  for (let delay = 5000; !layout; delay = Math.min(delay * 2, 60000)) {
+    try {
+      layout = await client.getLayout();
+    } catch (err) {
+      if (err instanceof NanoleafHttpError && err.status === 401) {
+        console.error('Nanoleaf rejected the auth token (401) — re-pair with `npm run pair`.');
+        process.exit(EXIT_REPAIR_NEEDED);
+      }
+      setStatus(`Nanoleaf unreachable (${err.message}) — retrying in ${delay / 1000}s`, true);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    throw err; // transient (controller offline) → exit 1, service manager retries
   }
-  const panels = prepareLayout(layout.positionData);
-  log.info(`nanoleaf ready: ${panels.length} panels, ${cfg.nanoleaf.fps} fps when playing`);
+  // The layout must be rotated by MINUS globalOrientation to match the physical
+  // wall (verified against the wall itself; the API's angle is the app's view
+  // rotation, not a transform to apply).
+  const orientation = -(await client.getGlobalOrientation());
+  const panels = prepareLayout(layout.positionData, orientation);
+  if (orientation) log.info(`layout rotated ${orientation}° to match the wall (globalOrientation)`);
+  const fps = cfg.visuals.fps; // the live lever (nanoleaf.fps is legacy and ignored)
+  log.info(`nanoleaf ready: ${panels.length} panels, ${fps} fps when playing (visuals.fps; Light Panels are rated for 10 Hz)`);
 
-  const streamer = new Streamer({ host: cfg.nanoleaf.host, fps: cfg.nanoleaf.fps });
+  const streamer = new Streamer({ host: cfg.nanoleaf.host, fps });
   const source = createSource(cfg.audio);
   renderer = new VisualRenderer({
     source,
     streamer,
     client,
     layout: panels,
+    rawLayout: layout.positionData,
+    baseOrientation: orientation,
+    panelSide: layout.sideLength,
     config: cfg.visuals,
-    fps: cfg.nanoleaf.fps,
+    fps,
+    idleEffect: cfg.nanoleaf.idleEffect,
     onStatus: setStatus,
   });
 
@@ -208,6 +345,7 @@ async function runService(configFile) {
       port: cfg.control.port,
       host: cfg.control.host,
       frameHz: cfg.control.frameHz,
+      getArt: () => latestArt,
       // Persist live changes so they survive a restart. Best-effort; the server swallows errors.
       onChange: () => config.save(configFile, cfg),
     });
@@ -220,13 +358,37 @@ async function runService(configFile) {
     }
   }
 
+  // LAN discovery beacon: the Android app broadcasts a probe and we answer with where the
+  // companion app lives, so nobody has to type (or re-type, after a DHCP move) this PC's IP.
+  let beacon = null;
+  const loopbackOnly = /^(127\.|localhost$|::1$)/.test(cfg.control.host);
+  if (control && cfg.control.discoveryPort > 0 && !loopbackOnly) {
+    const { Beacon } = require('./control/beacon');
+    beacon = new Beacon({
+      port: cfg.control.discoveryPort,
+      servicePort: control.server.address().port,
+      version: require('../package.json').version,
+    });
+    try {
+      await beacon.start();
+    } catch (err) {
+      log.warn(`discovery beacon failed to start (the app will need the URL typed in): ${err.message}`);
+      beacon = null;
+    }
+  } else if (control && cfg.control.discoveryPort > 0) {
+    log.info('discovery beacon off: control.host is loopback-only, so there is nothing for other devices to find');
+  }
+
   let shuttingDown = false;
   const shutdown = async (code = 0) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down');
     source.stop();
+    if (beacon) beacon.stop();
     if (control) control.stop();
+    if (hegelShieldFg) hegelShieldFg.stop();
+    if (hegel) hegel.stop();
     // Hand the panels back before exiting, rather than leaving them stuck in extControl.
     try { await renderer.releaseNow(); } catch (err) { log.error(`shutdown: ${err.message}`); }
     renderer.stop(); // sends the blackout frame
@@ -239,7 +401,18 @@ async function runService(configFile) {
   process.on('SIGTERM', () => shutdown(0));
   // A crash must still restore the panels rather than leave them frozen in extControl;
   // route through the same shutdown, then exit non-zero so the service manager restarts.
-  process.on('uncaughtException', (err) => { log.error(`uncaughtException: ${(err && err.stack) || err}`); shutdown(1); });
+  // Exception: the network changing under a discovery socket (router reboot, DHCP renew)
+  // is not a crash — rebuild discovery and carry on (2026-10-10: the weekly 03:00 router
+  // reboot took the service down this way and nothing restarted it).
+  process.on('uncaughtException', (err) => {
+    if (isTransientNetworkError(err)) {
+      log.warn(`network changed under a socket (${err.message}) — restarting Roon discovery, service stays up`);
+      if (roon) roon.restartDiscovery();
+      return;
+    }
+    log.error(`uncaughtException: ${(err && err.stack) || err}`);
+    shutdown(1);
+  });
   process.on('unhandledRejection', (err) => { log.error(`unhandledRejection: ${(err && err.stack) || err}`); shutdown(1); });
 }
 

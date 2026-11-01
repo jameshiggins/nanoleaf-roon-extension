@@ -21,7 +21,8 @@
   },
   "roon": {
     "enabled": true,
-    "zone": ""
+    "zone": "",
+    "feedOutput": ""
   },
   "visuals": {
     "include": [],
@@ -39,7 +40,9 @@
     "silenceFloor": 0.02,
     "onsetSensitivity": 1.1,
     "releaseDebounceMs": 5000,
-    "extControlKeepaliveMs": 4000,
+    "extControlKeepaliveMs": 15000,
+    "fps": 10,
+    "transition": 1,
     "flashStrength": 0.5,
     "albumMaxColors": 10,
     "albumPredominantChance": 0.33,
@@ -49,6 +52,31 @@
     "enabled": true,
     "port": 8787,
     "host": "127.0.0.1",
-    "frameHz": 20
+    "frameHz": 20,
+    "discoveryPort": 8788
+  },
+  "shield": {
+    "enabled": false,
+    "zone": "Living Room",
+    "target": "192.168.1.50:5555",
+    "adb": "C:\\Android\\platform-tools\\adb.exe",
+    "adbKey": "C:\\Users\\you\\.android\\adbkey",
+    "cooldownMinutes": 30
+  },
+  "hegel": {
+    "enabled": false,
+    "host": "192.168.1.60",
+    "port": 50001,
+    "zone": "Living Room",
+    "idleSeconds": 600,
+    "idleInput": 6,
+    "networkInput": 9,
+    "shieldTrigger": true,
+    "shieldPollSeconds": 1,
+    "shieldApps": [
+      "com.plexapp.android",
+      "com.google.android.youtube.tv",
+      "com.netflix.ninja"
+    ]
   }
 }

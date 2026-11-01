@@ -21,10 +21,11 @@
 
 const { EventEmitter } = require('node:events');
 const { FeatureExtractor } = require('../dsp/features');
-const { generatePalettes, resolvePalette } = require('./palettes');
+const { generatePalettes, resolvePalette, previewColors, CURATED } = require('./palettes');
 const { visualNames, describeVisuals, createVisual } = require('./visualizers');
 const { ShuffleBag, filterNames } = require('./shuffle');
-const { VISUALS_LEVERS, validateLever } = require('../config');
+const { VISUALS_LEVERS, validateLever, DEFAULTS } = require('../config');
+const { prepareLayout } = require('./layout');
 const log = require('../log')('visuals');
 
 /**
@@ -57,8 +58,15 @@ class VisualRenderer extends EventEmitter {
     super();
     this.source = opts.source;
     this.streamer = opts.streamer;
-    this.layout = opts.layout;
+    // rawLayout + baseOrientation enable live re-rotation (rotateLayout lever);
+    // plain opts.layout still works for tests and callers that pre-prepare.
+    this.rawLayout = opts.rawLayout ?? null;
+    this.baseOrientation = opts.baseOrientation ?? 0;
+    this.panelSide = opts.panelSide ?? 0;
     this.config = opts.config;
+    this.layout = this.rawLayout
+      ? prepareLayout(this.rawLayout, this.baseOrientation + (this.config.rotateLayout || 0))
+      : opts.layout;
     this.fps = opts.fps ?? 30;
     this.onStatus = opts.onStatus ?? (() => {});
     this.now = opts.now ?? Date.now;
@@ -82,7 +90,8 @@ class VisualRenderer extends EventEmitter {
     if (missing.length) log.warn(`visuals.include entries unknown: ${missing.join(', ')}`);
 
     this.visualBag = new ShuffleBag(this.poolNames, { rng: this.rng });
-    this.palettes = generatePalettes(this.config.palettes);
+    // curated presets (Nanoleaf classics) first, then the procedural set
+    this.palettes = [...CURATED, ...generatePalettes(this.config.palettes)];
     this.paletteBag = new ShuffleBag(this.palettes.map((_, i) => i), { rng: this.rng });
 
     // Optional palette pin: freeze the colors on one palette while scenes still
@@ -92,16 +101,26 @@ class VisualRenderer extends EventEmitter {
       this.pinnedPalette = resolvePalette(this.config.palette, this.config.palettes);
       if (!this.pinnedPalette) throw new Error(`unknown palette pin: ${this.config.palette}`);
     }
+    // Multi-pin: rotation shuffles among just these (overrides the single pin).
+    // Unknown names are dropped rather than fatal — the set may come from an older config.
+    this.pinnedSet = (this.config.palettePins || [])
+      .map((n) => this.palettes.find((p) => p.name.toLowerCase() === String(n).toLowerCase()))
+      .filter(Boolean);
 
     // Externally-supplied palette (e.g. derived from album art), overriding the
     // pin/rotation until cleared. Set via setLivePalette() as fetches resolve.
     this.livePalette = null;
+    // albumMixEvery turn counter: which palette changes go to the album palette.
+    // Starts on an album turn so the first track always shows its cover colors.
+    this.paletteTurn = 0;
+    this.onAlbumTurn = true;
 
     this.visual = null;
     this.currentName = null;
     this.currentPalette = null;
     this.nowPlaying = null;    // { title, artist, album, zoneName } | null
-    this.gate = 0;             // master silence gate [0,1]
+    this.warning = null;       // operator-facing problem (e.g. FeedMonitor: no audio from Roon) | null
+    this.gate = 0;            // master silence gate [0,1]
     this.lastFeatures = this.features.snapshot();
     this.lastRotateAt = 0;
     this.started = false;
@@ -115,6 +134,9 @@ class VisualRenderer extends EventEmitter {
     // panels were showing stays on screen.
     this.client = opts.client || null;
     this.releaseDebounceMs = opts.releaseDebounceMs ?? this.config.releaseDebounceMs ?? 5000;
+    // Fallback effect for release when no pre-play effect was snapshotted (a hard
+    // restart mid-stream leaves panels in *Dynamic* with nothing saved).
+    this.idleEffect = opts.idleEffect || '';
     // How often to re-assert extControl while acquired. The controller drops streaming
     // mode if anything else grabs the panels (someone picks a scene in the Nanoleaf app,
     // a schedule, HomeKit) — re-asserting on this interval takes ownership back within a
@@ -129,6 +151,15 @@ class VisualRenderer extends EventEmitter {
     this._reconcilePromise = Promise.resolve();
     this._releaseTimer = null;
     this._extControlTimer = null;
+    // Controller polling cadence inside the keepalive: brightness (cheap) every tick, the
+    // selected effect (~100 ms on an NL22, and the call most likely to hitch the LED path)
+    // only every Nth tick. Tests pass 1 to poll both every tick.
+    this.effectPollEvery = Math.max(1, Math.floor(opts.effectPollEvery ?? 2));
+    this._keepaliveTick = 0;
+    // Measured frame cadence (see _armRenderTimer): on Windows' 15.6 ms timer clock the fps
+    // lever is a target, not a promise, so the real rate is tracked and shown in getState().
+    this._tick = { intervals: [], lastAt: null, lastReportAt: 0 };
+    this.fpsReal = null;
 
     this._onFormat = (fmt) => this.features.setFormat(fmt);
     this._onPcm = (chunk) => this.features.onChunk(chunk);
@@ -147,11 +178,10 @@ class VisualRenderer extends EventEmitter {
 
   stop() {
     this.started = false;
-    clearInterval(this.renderTimer);
+    this._disarmRenderTimer();
     clearInterval(this.rotateTimer);
     clearTimeout(this._releaseTimer);
     this._stopExtControlKeepalive();
-    this.renderTimer = null;
     this.rotateTimer = null;
     this._releaseTimer = null;
     this.acquired = false;   // reset ownership so a reused renderer can re-acquire cleanly
@@ -241,10 +271,15 @@ class VisualRenderer extends EventEmitter {
       try {
         // Snapshot before touching anything so release can put it back. `*Dynamic*` means
         // something was already streaming (not restorable) — keep any effect saved earlier.
-        const [effect, power] = await Promise.all([
+        const [effect, power, brightness] = await Promise.all([
           this.client.getSelectedEffect(),
           this.client.getPower(),
+          this.client.getBrightness(),
         ]);
+        // Panels must be at full brightness while we stream — the controller's global
+        // brightness scales our frames, and an evening schedule dimming it reads as
+        // "the wall is dead". Snapshot the old level so release puts it back.
+        if (brightness != null) this.savedBrightness = brightness;
         if (effect && effect !== '*Dynamic*' && String(effect).trim().length > 0) {
           this.savedEffect = effect;
           this.savedPower = power;
@@ -255,34 +290,41 @@ class VisualRenderer extends EventEmitter {
           log.info('acquire: panels were already in *Dynamic*; nothing to restore later');
         }
         await this.client.setPower(true);
+        await this.client.setBrightness(100);
         await this.client.enableExtControl();
       } catch (err) {
         log.error(`acquire failed: ${err.message}`);
       }
     }
     this.acquired = true;
-    if (!this.renderTimer) this.renderTimer = setInterval(() => this.renderFrame(), 1000 / this.fps);
+    this._armRenderTimer();
     this._startExtControlKeepalive();
     log.info('acquired: streaming to panels');
     this.emit('state', this.getState());
   }
 
   async _exitAcquired() {
-    if (this.renderTimer) {
-      clearInterval(this.renderTimer);
-      this.renderTimer = null;
-    }
+    this._disarmRenderTimer();
+    // Otherwise the first frame of the next session logs the whole released window
+    // as a bogus multi-minute "render stall".
+    this._lastFrameAt = null;
     this._stopExtControlKeepalive();
     this.streamer.pause(); // stop the UDP last-frame keepalive so the panels aren't frozen
     this.acquired = false;
     this.gate = 0; // next acquire fades up from black rather than resuming mid-look
     if (this.client) {
       try {
-        if (this.savedEffect) {
-          await this.client.selectEffect(this.savedEffect);
-          log.info(`released: restored effect "${this.savedEffect}"`);
+        const restore = this.savedEffect || this.idleEffect;
+        if (restore) {
+          await this.client.selectEffect(restore);
+          log.info(`released: ${this.savedEffect ? `restored effect "${restore}"` : `no saved effect — selected idle effect "${restore}"`}`);
         } else {
           log.info('released: no saved effect to restore, panels stay in *Dynamic*');
+        }
+        // Put the pre-acquire brightness back (we forced 100 while streaming).
+        if (this.savedBrightness != null && this.savedBrightness !== 100) {
+          await this.client.setBrightness(this.savedBrightness);
+          log.info(`released: brightness restored to ${this.savedBrightness}%`);
         }
         // Selecting an effect powers panels on, so restore power last — otherwise panels
         // that were off before we took them would be left on.
@@ -298,23 +340,86 @@ class VisualRenderer extends EventEmitter {
   }
 
   /**
+   * Frame timer: a drift-corrected setTimeout chain rather than setInterval. On Windows,
+   * Node's timers tick on the 15.6 ms system clock (nothing here calls timeBeginPeriod), so
+   * a plain interval of 1000/fps rounds every tick up — "20 fps" ran at 16, "30" at 22.
+   * Scheduling each tick against an ideal grid lets a late tick shorten the next wait, so the
+   * average rate matches the lever even though single ticks still land on the coarse clock.
+   * After a stall the grid is re-based instead of burst-firing the missed frames.
+   */
+  _armRenderTimer() {
+    if (this.renderTimer) return;
+    const period = 1000 / this.fps;
+    let nextAt = performance.now() + period;
+    const tick = () => {
+      if (!this.renderTimer) return; // disarmed while this tick was pending
+      this._noteTick();
+      this.renderFrame();
+      const now = performance.now();
+      nextAt += period;
+      if (nextAt < now - period) nextAt = now + period; // stalled: don't catch up in a burst
+      this.renderTimer = setTimeout(tick, Math.max(0, nextAt - now));
+    };
+    this.renderTimer = setTimeout(tick, period);
+  }
+
+  _disarmRenderTimer() {
+    if (this.renderTimer) clearTimeout(this.renderTimer);
+    this.renderTimer = null;
+    this._tick.lastAt = null;
+  }
+
+  /** Track real tick spacing; once a minute log it and refresh `fpsReal` for the app. */
+  _noteTick() {
+    const t = performance.now();
+    const s = this._tick;
+    if (s.lastAt != null) {
+      s.intervals.push(t - s.lastAt);
+      if (s.intervals.length > 1200) s.intervals.splice(0, s.intervals.length - 1200);
+    }
+    s.lastAt = t;
+    if (t - s.lastReportAt < 60000) return;
+    s.lastReportAt = t;
+    if (s.intervals.length < 10) return;
+    const sorted = [...s.intervals].sort((a, b) => a - b);
+    const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
+    const pick = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+    this.fpsReal = Math.round((1000 / mean) * 10) / 10;
+    log.info(`frame timer: ${this.fpsReal} fps real (target ${this.fps}) — tick p50 ${pick(0.5).toFixed(1)} ms, p99 ${pick(0.99).toFixed(1)} ms, max ${sorted[sorted.length - 1].toFixed(1)} ms`);
+    s.intervals.length = 0;
+    this.emit('state', this.getState());
+  }
+
+  /**
    * Re-assert extControl on an interval so the visuals reclaim the panels if anything else
    * takes them (a scene picked in the Nanoleaf app, a schedule) — the controller silently
    * leaves streaming mode and ignores our frames until we re-enter it.
    */
   _startExtControlKeepalive() {
     if (this._extControlTimer || !this.client) return;
+    this._keepaliveTick = 0; // first tick after (re)arming always checks the effect
     this._extControlTimer = setInterval(async () => {
       if (!this.acquired || this._keepaliveInFlight) return;
       this._keepaliveInFlight = true;
+      const tick = this._keepaliveTick++;
       try {
         // Only re-assert when the controller has actually left extControl (someone set a
         // scene / a schedule fired). Re-asserting unconditionally every tick can hitch the
-        // panels mid-stream — a cheap GET here avoids that while still reclaiming fast.
-        const sel = await this.client.getSelectedEffect();
-        if (this.acquired && sel !== '*Dynamic*') {
-          await this.client.enableExtControl();
-          log.info('extControl reclaimed — panels had been set to a scene');
+        // panels mid-stream. The effect GET is itself the controller's slow call (~100 ms
+        // on an NL22), so it runs only every `effectPollEvery` ticks.
+        if (tick % this.effectPollEvery === 0) {
+          const sel = await this.client.getSelectedEffect();
+          if (this.acquired && sel !== '*Dynamic*') {
+            await this.client.enableExtControl();
+            log.info('extControl reclaimed — panels had been set to a scene');
+          }
+        }
+        // Same for brightness: a Nanoleaf app schedule dimming the controller mid-play
+        // scales our frames toward black. Reclaim full brightness while streaming.
+        const bri = await this.client.getBrightness();
+        if (this.acquired && bri != null && bri < 100) {
+          await this.client.setBrightness(100);
+          log.info(`brightness reclaimed — controller had been dimmed to ${bri}%`);
         }
       } catch (err) {
         log.debug(`extControl keepalive: ${err.message}`);
@@ -351,10 +456,36 @@ class VisualRenderer extends EventEmitter {
     this.rotate(false);
   }
 
+  /**
+   * Palette for the next look. Album colors (livePalette) normally win outright;
+   * with albumMixEvery >= 2 they only take every Nth turn, with bag/pinned
+   * palettes shuffling in between. Tracks whether this turn went to the album so
+   * a late-arriving album palette (async art fetch) knows whether to apply.
+   */
+  /** Non-album palette choice: the multi-pin set, the single pin, or the global bag. */
+  _pinnedOrBag() {
+    if (this.pinnedSet && this.pinnedSet.length) {
+      return this.pinnedSet[Math.floor(this.rng() * this.pinnedSet.length)];
+    }
+    return this.pinnedPalette || this.palettes[this.paletteBag.next()];
+  }
+
+  _rotationPalette() {
+    if (!this.livePalette) {
+      // no album palette in play — leave onAlbumTurn alone so a late-arriving
+      // first album fetch still applies (it starts true for exactly that reason)
+      return this._pinnedOrBag();
+    }
+    const every = Math.floor(this.config.albumMixEvery || 0);
+    if (every < 2) { this.onAlbumTurn = true; return this.livePalette; }
+    this.onAlbumTurn = this.paletteTurn++ % every === 0;
+    return this.onAlbumTurn ? this.livePalette : this._pinnedOrBag();
+  }
+
   /** Swap in a new visualizer + palette from the shuffle bags. */
   rotate(initial) {
     const name = this.visualBag.next();
-    const palette = this.livePalette || this.pinnedPalette || this.palettes[this.paletteBag.next()];
+    const palette = this._rotationPalette();
     this._apply(name, palette, initial ? 'starting with' : 'switching to');
   }
 
@@ -374,10 +505,16 @@ class VisualRenderer extends EventEmitter {
     // Stall detection: if the loop is late by 3+ frames, something blocked the event loop
     // (GC, a synchronous op, a stalled log write). Logs the gap so we can correlate freezes.
     const nowMs = this.now();
+    const expected = 1000 / this.fps;
+    // Animate on measured elapsed time, not the nominal period: setInterval never
+    // burst-fires missed ticks, so a fixed dt turns every late tick into lost visual
+    // time — the wall runs slow under jitter, then snaps back. Capped at 3 frames so
+    // a long stall reads as a brief freeze instead of a forward teleport.
+    let dtMs = expected;
     if (this._lastFrameAt) {
       const gap = nowMs - this._lastFrameAt;
-      const expected = 1000 / this.fps;
       if (gap > expected * 3) log.warn(`render stall: ${Math.round(gap)}ms gap (expected ~${Math.round(expected)}ms)`);
+      dtMs = Math.min(gap, expected * 3);
     }
     this._lastFrameAt = nowMs;
 
@@ -389,23 +526,51 @@ class VisualRenderer extends EventEmitter {
     this.gate += (target - this.gate) * rate;
     if (this.gate < 0.01) this.gate = target === 0 ? 0 : this.gate;
 
-    const frame = this.visual.render(f, 1000 / this.fps);
+    const frame = this.visual.render(f, dtMs);
     // Vintage tone pass: only when the active palette opts in via sat/val < 1.
     // Absent (generated palettes) → treated as 1, so their output is unchanged.
     const pal = this.currentPalette;
     const sat = pal && pal.sat != null ? pal.sat : 1;
     const val = pal && pal.val != null ? pal.val : 1;
     if (sat < 1 || val < 1) toneMap(frame, sat, val);
-    if (this.gate < 0.999) {
+    // Master brightness × silence gate in one pass (hardware brightness stays
+    // pinned at 100 by the keepalive, so dimming happens in the frames themselves).
+    const bright = (this.config.brightness ?? 1) * this.gate;
+    if (bright < 0.999) {
       for (const p of frame) {
-        p.r *= this.gate;
-        p.g *= this.gate;
-        p.b *= this.gate;
+        p.r *= bright;
+        p.g *= bright;
+        p.b *= bright;
       }
     }
+    // Hardware fade per frame (extControl transition, 100 ms units) — the `transition`
+    // lever. 1 pairs with the 10 Hz rate Nanoleaf designed the fade for: the controller
+    // glides between frames instead of snapping. 0 = instant apply (sharper beats, but any
+    // delivery gap then reads as freeze-then-snap instead of a glide).
+    const fade = Math.max(0, Math.round(this.config.transition ?? 1));
+    for (const p of frame) p.transition = fade;
     this.streamer.sendFrame(frame);
     if (this.listenerCount('frame') > 0) this.emit('frame', frame, f, this.gate);
     return frame;
+  }
+
+  /**
+   * Re-initialize the panels: power on, full brightness, extControl re-handshake.
+   * The fix-everything button for "the wall is dark but the app looks fine" —
+   * covers external dimming (Nanoleaf app/schedules) and dropped extControl mode.
+   */
+  async resetPanels() {
+    if (!this.client) return { ok: false, error: 'no Nanoleaf client (audio-only mode?)' };
+    try {
+      await this.client.setPower(true);
+      await this.client.setBrightness(100);
+      if (this.acquired) await this.client.enableExtControl(); // re-handshake; UDP stream is already flowing
+      log.info(`panel reset: power on, brightness 100${this.acquired ? ', extControl re-asserted' : ''}`);
+      return { ok: true };
+    } catch (err) {
+      log.error(`panel reset failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
   }
 
   // ---- control surface (used by the companion-app API) ----
@@ -423,20 +588,32 @@ class VisualRenderer extends EventEmitter {
       nowPlaying: this.nowPlaying,
       panels: this.layout.length,
       acquired: this.acquired,
+      warning: this.warning,
+      fps: this.fps,
+      fpsReal: this.fpsReal, // measured over the last minute of streaming; null until then
     };
   }
 
-  /** The full catalogue the app offers as choices. */
+  /** The full catalogue the app offers as choices. Every visual is listed;
+   *  `enabled` says whether it's currently in the rotation pool. Palettes carry
+   *  their preview colors and a `curated` flag so the app can group presets. */
   getCatalogue() {
     return {
-      visuals: describeVisuals().filter((v) => this.poolNames.includes(v.name)),
-      palettes: this.palettes.map((p) => p.name),
-      layout: this.layout.map((p) => ({ id: p.id, nx: p.nx, ny: p.ny })),
+      visuals: describeVisuals().map((v) => ({ ...v, enabled: this.poolNames.includes(v.name) })),
+      palettes: this.palettes.map((p) => ({ name: p.name, colors: previewColors(p), curated: CURATED.includes(p) })),
+      layout: this.layout.map((p) => ({ id: p.id, nx: p.nx, ny: p.ny, mx: p.mx, my: p.my, o: p.o, shape: p.shape })),
+      panelSide: this.panelSide || 0, // panel side length (mm) for a true-scale preview
     };
   }
 
   setNowPlaying(track) {
     this.nowPlaying = track;
+    this.emit('state', this.getState());
+  }
+
+  /** Surface (or clear, with null) a problem in the companion app's state. */
+  setWarning(message) {
+    this.warning = message || null;
     this.emit('state', this.getState());
   }
 
@@ -475,6 +652,19 @@ class VisualRenderer extends EventEmitter {
   setLivePalette(palette) {
     if (!palette) return null;
     this.livePalette = palette;
+    const every = Math.floor(this.config.albumMixEvery || 0);
+    if (every >= 2) {
+      if (this.config.rotate === 'off') {
+        // Nothing else rotates, so the track change itself consumes a mix turn.
+        this.onAlbumTurn = this.paletteTurn++ % every === 0;
+        const chosen = this.onAlbumTurn ? palette : this._pinnedOrBag();
+        this._apply(this.currentName || this.visualBag.next(), chosen, this.onAlbumTurn ? 'album colors' : 'mixing in');
+        return chosen.name;
+      }
+      // Rotation already took this turn (the art fetch resolves after onTrackChange):
+      // only refresh the look when that turn went to the album palette.
+      if (!this.onAlbumTurn) return palette.name;
+    }
     this._apply(this.currentName || this.visualBag.next(), palette, 'album colors');
     return palette.name;
   }
@@ -483,7 +673,7 @@ class VisualRenderer extends EventEmitter {
   clearLivePalette() {
     if (!this.livePalette) return;
     this.livePalette = null;
-    const palette = this.pinnedPalette || this.palettes[this.paletteBag.next()];
+    const palette = this._pinnedOrBag();
     this._apply(this.currentName || this.visualBag.next(), palette, 'album colors off');
   }
 
@@ -511,7 +701,9 @@ class VisualRenderer extends EventEmitter {
   /** Current value of every live-settable visuals lever (for the companion menu). */
   getOptions() {
     const out = {};
-    for (const key of Object.keys(VISUALS_LEVERS)) out[key] = this.config[key];
+    // A config block handed in without a newer lever (tests, older callers) still reports
+    // the default the renderer actually uses for it, so the menu never shows a hole.
+    for (const key of Object.keys(VISUALS_LEVERS)) out[key] = this.config[key] ?? DEFAULTS.visuals[key];
     return out;
   }
 
@@ -526,6 +718,28 @@ class VisualRenderer extends EventEmitter {
     switch (VISUALS_LEVERS[key].apply) {
       case 'gain': this.setGain(value); break;
       case 'rotate': this.setRotate(value); break;
+      case 'fps': {
+        // Re-arm the frame timer and the streamer's send budget at the new rate.
+        this.config.fps = value;
+        this.fps = value;
+        this.fpsReal = null; // stale until a minute at the new rate has been measured
+        this._tick.intervals.length = 0;
+        if (this.renderTimer) {
+          this._disarmRenderTimer();
+          this._armRenderTimer();
+        }
+        if (this.streamer) this.streamer.intervalMs = 1000 / value;
+        break;
+      }
+      case 'keepalive': {
+        this.config.extControlKeepaliveMs = value;
+        this.extControlKeepaliveMs = value;
+        if (this._extControlTimer) { // mid-stream: re-arm at the new cadence
+          this._stopExtControlKeepalive();
+          this._startExtControlKeepalive();
+        }
+        break;
+      }
       case 'palette': {
         if (value === '') { this.config.palette = ''; this.pinnedPalette = null; break; }
         const p = resolvePalette(value, this.config.palettes);
@@ -533,6 +747,29 @@ class VisualRenderer extends EventEmitter {
         this.config.palette = value;
         this.pinnedPalette = p;
         if (!this.livePalette) this._apply(this.currentName || this.visualBag.next(), p, 'pinned palette');
+        break;
+      }
+      case 'palettePins': {
+        const resolved = value
+          .map((n) => this.palettes.find((p) => p.name.toLowerCase() === String(n).toLowerCase()))
+          .filter(Boolean);
+        this.config.palettePins = resolved.map((p) => p.name);
+        this.pinnedSet = resolved;
+        // Recolor right away so the tap has visible feedback (album palette still wins).
+        if (!this.livePalette && resolved.length) {
+          this._apply(this.currentName || this.visualBag.next(), this._pinnedOrBag(), 'pinned palettes');
+        }
+        break;
+      }
+      case 'layout': {
+        this.config[key] = value;
+        if (!this.rawLayout) break; // no raw coordinates to re-derive from
+        this.layout = prepareLayout(this.rawLayout, this.baseOrientation + (this.config.rotateLayout || 0));
+        // visuals capture the layout at creation — rebuild the current one in place
+        if (this.currentName && this.currentPalette) {
+          this.visual = createVisual(this.currentName, this.layout, this.currentPalette, this.rng,
+            { flashStrength: this.config.flashStrength });
+        }
         break;
       }
       case 'onset':
@@ -568,7 +805,7 @@ class VisualRenderer extends EventEmitter {
 
   /** Regenerate the palette set + bag (and re-resolve the pin) after palettes count changed. */
   _rebuildPalettes() {
-    this.palettes = generatePalettes(this.config.palettes);
+    this.palettes = [...CURATED, ...generatePalettes(this.config.palettes)];
     this.paletteBag = new ShuffleBag(this.palettes.map((_, i) => i), { rng: this.rng });
     if (this.config.palette) this.pinnedPalette = resolvePalette(this.config.palette, this.config.palettes) || this.pinnedPalette;
   }

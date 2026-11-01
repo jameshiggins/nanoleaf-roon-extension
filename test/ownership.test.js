@@ -24,18 +24,20 @@ const BASE_CFG = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Records every controller call so tests can assert on order, not just occurrence. */
-function fakeClient({ effect = 'Vintage Modern', power = false } = {}) {
+function fakeClient({ effect = 'Vintage Modern', power = false, brightness = 100 } = {}) {
   return {
     calls: [],
     async getSelectedEffect() { this.calls.push('getSelectedEffect'); return effect; },
     async getPower() { this.calls.push('getPower'); return power; },
     async setPower(on) { this.calls.push(`setPower(${on})`); },
+    async getBrightness() { this.calls.push('getBrightness'); return brightness; },
+    async setBrightness(v) { this.calls.push(`setBrightness(${v})`); },
     async enableExtControl() { this.calls.push('enableExtControl'); },
     async selectEffect(name) { this.calls.push(`selectEffect(${name})`); },
   };
 }
 
-function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs = 100000 } = {}) {
+function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs = 100000, effectPollEvery = 1, idleEffect } = {}) {
   const source = new EventEmitter();
   const streamer = { frames: [], blackouts: [], paused: 0, sendFrame(f) { this.frames.push(f); }, blackout(ids) { this.blackouts.push(ids); }, pause() { this.paused++; } };
   const renderer = new VisualRenderer({
@@ -45,6 +47,8 @@ function make({ client, cfg = {}, releaseDebounceMs = 5, extControlKeepaliveMs =
     fps: 30,
     releaseDebounceMs,
     extControlKeepaliveMs, // large by default so it doesn't perturb other tests
+    effectPollEvery,       // 1 = check the effect on every keepalive tick (production: every 2nd)
+    idleEffect,
     rng: () => 0.42,
   });
   return { renderer, streamer, client };
@@ -71,6 +75,19 @@ test('acquire saves the current effect and power, powers on, enters extControl',
   assert.equal(renderer.savedPower, false);
   assert.ok(client.calls.includes('setPower(true)'), 'panels powered on');
   assert.ok(client.calls.includes('enableExtControl'), 'entered streaming mode');
+  renderer.stop();
+});
+
+test('release with nothing saved falls back to the idle effect', async () => {
+  // Panels already in *Dynamic* at acquire (hard restart mid-stream): nothing saved.
+  const client = fakeClient({ effect: '*Dynamic*', power: true });
+  const { renderer } = make({ client, releaseDebounceMs: 5, idleEffect: 'Vintage Modern' });
+  renderer.start();
+  await renderer.acquire();
+  renderer.release();
+  await sleep(40);
+  assert.equal(renderer.acquired, false, 'released');
+  assert.ok(client.calls.includes('selectEffect(Vintage Modern)'), 'idle effect selected');
   renderer.stop();
 });
 
@@ -189,6 +206,21 @@ test('keepalive does NOT re-assert extControl while still streaming (no periodic
   await sleep(70); // several keepalive ticks
   const after = client.calls.filter((c) => c === 'enableExtControl').length;
   assert.equal(after, atAcquire, 'no re-assert while the controller still reports *Dynamic*');
+  renderer.stop();
+});
+
+test('keepalive polls brightness every tick but the slow effect GET only every Nth', async () => {
+  const client = fakeClient({ effect: '*Dynamic*', power: true });
+  const { renderer } = make({ client, extControlKeepaliveMs: 15, effectPollEvery: 3 });
+  renderer.start();
+  await renderer.acquire();
+  const count = (name) => client.calls.filter((c) => c === name).length;
+  const base = { eff: count('getSelectedEffect'), bri: count('getBrightness') };
+  await sleep(110); // ~6-7 ticks on a 15 ms interval
+  const eff = count('getSelectedEffect') - base.eff;
+  const bri = count('getBrightness') - base.bri;
+  assert.ok(bri >= 4, `brightness polled every tick, got ${bri}`);
+  assert.ok(eff >= 1 && eff <= Math.ceil(bri / 3) + 1, `effect polled every 3rd tick: ${eff} of ${bri}`);
   renderer.stop();
 });
 
