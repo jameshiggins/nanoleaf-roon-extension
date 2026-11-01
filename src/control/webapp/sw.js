@@ -6,8 +6,8 @@
  * Only registered on secure contexts — over plain http it never runs.
  */
 
-const CACHE = 'nanoleaf-shell-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'nanoleaf-shell-v2';
+const SHELL = ['/', '/np.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -47,6 +47,7 @@ const STATIC = {
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/manifest.webmanifest': { file: 'manifest.webmanifest', type: 'application/manifest+json' },
   '/sw.js': { file: 'sw.js', type: 'text/javascript; charset=utf-8' },
+  '/np.js': { file: 'np.js', type: 'text/javascript; charset=utf-8' },
   '/icon-192.png': { file: 'icon-192.png', type: 'image/png' },
   '/icon-512.png': { file: 'icon-512.png', type: 'image/png' },
 };

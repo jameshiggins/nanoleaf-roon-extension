@@ -241,6 +241,53 @@
   body.tv .tvfocus { outline: 3px solid rgb(var(--accent)); outline-offset: 2px;
     position: relative; z-index: 2; transform: scale(1.03); transition: transform .1s, outline-color .2s; }
   body.tv .slider.tvfocus { outline-offset: 4px; border-radius: 10px; transform: none; }
+
+  /* ---- Now Playing screen (np.js): full-screen visualizer + auto-hiding HUD ---- */
+  #npScreen { position: fixed; inset: 0; z-index: 20; background: #000; display: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #npScreen.open { display: block; }
+  body.npOpen { overflow: hidden; }
+  #npCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #npHud { position: absolute; inset: 0; opacity: 0; transition: opacity .25s; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: calc(var(--safe-t) + 18px) calc(env(safe-area-inset-right, 0px) + 18px) calc(var(--safe-b) + 18px) calc(env(safe-area-inset-left, 0px) + 18px); }
+  #npHud.show { opacity: 1; pointer-events: auto; }
+  #npHud .npTop { display: flex; gap: 14px; align-items: center; text-shadow: 0 2px 14px rgba(0,0,0,.9); }
+  #npHud .npArt { width: 64px; height: 64px; border-radius: 12px; overflow: hidden; flex: none; background: rgba(255,255,255,.1); display: none; }
+  #npHud .npArt.has { display: block; }
+  #npHud .npArt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #npHud .npMeta { min-width: 0; flex: 1; }
+  #npHud .npTitle { font-size: clamp(17px, 4.5vw, 24px); font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #npHud .npArtist { font-size: 14px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #npHud .npAlbum { font-size: 12px; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #npHud .npRight { text-align: right; flex: none; }
+  #npHud .npVis { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: rgba(0,0,0,.5); border: 1px solid rgba(var(--accent), .5); font-size: 13px; font-weight: 650; }
+  #npHud .npPack { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: rgb(var(--accent)); }
+  #npHud .npIdx { font-size: 11px; color: var(--ink-faint); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  #npHud .npBottom { display: flex; flex-direction: column; gap: 10px; }
+  #npHud .npPicker { display: none; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 6px 2px; align-items: center; }
+  #npHud .npPicker::-webkit-scrollbar { display: none; }
+  #npHud.picker .npPicker { display: flex; }
+  #npHud .npChipHead { flex: none; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); font-weight: 650; padding: 0 6px 0 2px; }
+  #npHud .npChip { flex: none; padding: 9px 13px; border-radius: 12px; background: rgba(10,12,18,.72); border: 1.5px solid rgba(255,255,255,.14);
+    font-size: 13px; font-weight: 600; color: var(--ink-dim); white-space: nowrap; cursor: pointer; transition: transform .1s, border-color .15s, background .15s; }
+  #npHud .npChip.sel { background: rgba(var(--accent), .3); border-color: rgba(var(--accent), .8); color: var(--ink); }
+  #npHud .npChip.focus { outline: 3px solid rgb(var(--accent)); outline-offset: 2px; transform: scale(1.06); }
+  #npHud .npBar { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--ink-faint); text-shadow: 0 1px 8px rgba(0,0,0,.9); }
+  #npHud .npHint { flex: 1; }
+  #npHud .npAuto { padding: 5px 10px; border-radius: 999px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.18); cursor: pointer; color: var(--ink-dim); font-weight: 600; }
+  #npHud .npAuto.on { border-color: rgba(var(--accent), .7); color: rgb(var(--accent)); }
+  #npHud .npClose { width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.2);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px; color: var(--ink); }
+  body.tv #npHud { padding: max(30px, 5vh) max(46px, 5vw); }
+  body.tv #npHud .npArt { width: 96px; height: 96px; border-radius: 16px; }
+  body.tv #npHud .npTitle { font-size: 30px; }
+  body.tv #npHud .npArtist { font-size: 18px; }
+  body.tv #npHud .npAlbum { font-size: 14px; }
+  body.tv #npHud .npVis { font-size: 16px; padding: 8px 16px; }
+  body.tv #npHud .npChip { font-size: 16px; padding: 11px 16px; }
+  body.tv #npHud .npBar { font-size: 14px; }
+  body.tv #npHud .npClose { display: none; }
 </style>
 </head>
 <body>
@@ -278,6 +325,7 @@
   <section class="card">
     <h2>Quick</h2>
     <div class="row wrap">
+      <div class="act" id="npBtn" data-act="np"><span class="ico">📺</span><span>Now playing</span></div>
       <div class="act" data-preset="calm"><span class="ico">🌙</span><span>Calm</span></div>
       <div class="act" data-preset="reactive"><span class="ico">⚡</span><span>Reactive</span></div>
       <div class="act" data-act="shuffle"><span class="ico">🔀</span><span>Shuffle</span></div>
@@ -381,6 +429,7 @@
 
 <div id="toast"></div>
 
+<script src="/np.js"></script>
 <script>
 "use strict";
 (function () {
@@ -1002,6 +1051,19 @@
     b.addEventListener("click", function () { buzz(); b.classList.add("primary"); setTimeout(function () { b.classList.remove("primary"); }, 400); applyPreset(b.dataset.preset); });
   });
   $("[data-act='shuffle']").addEventListener("click", function () { buzz(); post({ cmd: "next" }); });
+
+  // ---------- Now Playing screen (np.js) ----------
+  var NP = window.NanoleafNP || null;
+  if (NP) {
+    $("#npBtn").addEventListener("click", function () { buzz(); NP.open(); });
+    // the Shield wrapper consumes Back only while we claim it (NanoleafTV bridge, app ≥ 0.4)
+    NP.onBackCapture(function (on) {
+      try { if (window.NanoleafTV && NanoleafTV.setBackCaptured) NanoleafTV.setBackCaptured(!!on); } catch (e) {}
+    });
+    if (/[?&]np=1/.test(location.search)) setTimeout(function () { NP.open(); }, 50);
+  } else {
+    $("#npBtn").style.display = "none";
+  }
   $("#resetBtn").addEventListener("click", function () {
     var lbl = $("#resetBtn span:last-child");
     buzz();
@@ -1016,7 +1078,7 @@
   // re-pull the layout after a rotation change so the wall preview re-fits live
   function refetchLayout() {
     fetch("/api/catalogue").then(function (r) { return r.json(); }).then(function (d) {
-      if (d && d.layout) { catalogue.layout = d.layout; catalogue.panelSide = d.panelSide || catalogue.panelSide; sizeWall(); }
+      if (d && d.layout) { catalogue.layout = d.layout; catalogue.panelSide = d.panelSide || catalogue.panelSide; sizeWall(); if (NP) NP.setLayout(d.layout); }
     }).catch(function () {});
   }
 
@@ -1034,6 +1096,7 @@
       var d = JSON.parse(e.data); catalogue = d.catalogue || catalogue; state = d.state || state;
       sizeWall(); // new layout → re-aspect + refit the wall preview
       buildScenes(); buildPalettes(); renderNP(); syncSliders(); refreshConfig();
+      if (NP) { NP.setLayout(catalogue.layout); NP.setState(state); }
       dotEl.classList.remove("off"); statusEl.textContent = "live";
       if (TV && !tvFocusEl) {
         // land the D-pad on the first Quick action (not the Rotate slider, which is
@@ -1044,8 +1107,9 @@
     });
     es.addEventListener("frame", function (e) {
       var d = JSON.parse(e.data); colors = d.c || colors; features = d.f || features; if (features.onset) beat = 1;
+      if (NP) NP.feed(colors, features);
     });
-    es.addEventListener("state", function (e) { state = JSON.parse(e.data); renderNP(); syncSliders(); });
+    es.addEventListener("state", function (e) { state = JSON.parse(e.data); renderNP(); syncSliders(); if (NP) NP.setState(state); });
     es.onopen = function () { dotEl.classList.remove("off"); statusEl.textContent = "live"; };
     es.onerror = function () {
       dotEl.classList.add("off"); statusEl.textContent = "reconnecting…";
@@ -1117,6 +1181,7 @@
     el.click();
   }
   window.__tvKey = function (name) {
+    if (NP && NP.isOpen() && NP.key(name)) return; // the Now Playing screen owns the remote while it's up
     if (!TV) { // old wrapper without the UA tag: keep the legacy minimal behavior
       if (name === "next" || name === "ok") post({ cmd: "next" });
       else if (name === "up") scrollBy({ top: -240, behavior: "smooth" });
